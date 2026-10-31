@@ -1,0 +1,10 @@
+{
+  "name": "Panneau météo",
+  "author": "Pailledelune",
+  "desc": "Panneau météo animé : heure, date, mesures, soleil, lune et prévisions à 5 jours, en paysage ou en portrait",
+  "platforms": ["pi/epoch-1", "pi/epoch-2"],
+  "offline": {
+    "support": "yes",
+    "info": "L'heure fonctionne sans Internet ; la météo nécessite une connexion"
+  }
+}

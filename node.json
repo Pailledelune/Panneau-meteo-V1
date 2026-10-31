@@ -1,0 +1,41 @@
+{
+  "name": "Panneau météo",
+  "permissions": {
+    "network": "Récupère la position de la ville et la météo sur open-meteo.com"
+  },
+  "options": [
+    {
+      "title": "Lieu",
+      "type": "section",
+      "intro": "La météo se met à jour toutes les 15 minutes depuis Open-Meteo."
+    },
+    {
+      "title": "Ville",
+      "name": "ville",
+      "type": "string",
+      "default": "Sarrebourg"
+    },
+    {
+      "title": "Code du pays",
+      "name": "pays",
+      "type": "string",
+      "default": "FR",
+      "hint": "Deux lettres : FR, DE, BE, CH, LU. Laisser vide pour chercher dans tous les pays"
+    },
+    {
+      "title": "Affichage",
+      "type": "section"
+    },
+    {
+      "title": "Orientation de l'écran",
+      "name": "orientation",
+      "type": "select",
+      "options": [
+        ["paysage", "Paysage"],
+        ["portrait_gauche", "Portrait (écran tourné d'un quart de tour vers la gauche)"],
+        ["portrait_droite", "Portrait (écran tourné d'un quart de tour vers la droite)"]
+      ],
+      "default": "paysage"
+    }
+  ]
+}

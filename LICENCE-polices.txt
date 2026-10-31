@@ -1,0 +1,7 @@
+Les polices sans.ttf et sans-gras.ttf sont les polices DejaVu Sans et DejaVu Sans Bold.
+
+Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
+Bitstream Vera Fonts Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
+Bitstream Vera is a trademark of Bitstream, Inc.
+
+Licence complète : https://dejavu-fonts.github.io/License.html

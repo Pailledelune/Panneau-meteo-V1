@@ -22,6 +22,8 @@ PERIODE_ERREUR = 2 * 60    # nouvel essai apres une erreur
 PAUSE = 20                 # frequence de lecture des reglages
 
 GEL = 0.0                  # degres : risque de verglas en dessous
+RAFALES_VENT = 80          # km/h : alerte vent sur les 24 prochaines heures
+RAFALES_TEMPETE = 100      # km/h : alerte tempete
 HEURES_COURBE = 24
 TENDANCE = 3               # ecart calcule sur 3 heures
 
@@ -92,6 +94,37 @@ def condition(code, jour):
 def risque_verglas(temperature, pluies):
     """Estimation : gel apres des precipitations dans les dernieres heures"""
     return temperature <= GEL and any((p or 0) > 0 for p in pluies)
+
+
+def alerte(heures, i):
+    """Phenomene le plus grave prevu sur 24 heures, ou None.
+    Calcule depuis les previsions, ce n'est pas la vigilance officielle."""
+    fin = i + HEURES_COURBE
+    codes = heures["weather_code"][i:fin]
+    temps = heures["temperature_2m"][i:fin]
+    pluies = heures["precipitation"][i:fin]
+    rafales = [r for r in heures["wind_gusts_10m"][i:fin] if r is not None]
+    rafale_max = max(rafales) if rafales else 0
+
+    verglas = False
+    for code, temp, pluie in zip(codes, temps, pluies):
+        if code in (56, 57, 66, 67):           # bruine ou pluie verglacante
+            verglas = True
+        elif (51 <= code <= 65 or 80 <= code <= 82) and temp is not None \
+                and temp <= 0.5 and (pluie or 0) > 0:
+            verglas = True
+
+    if rafale_max >= RAFALES_TEMPETE:
+        return u"tempête"
+    if any(code in (95, 96, 99) for code in codes):
+        return "orages"
+    if verglas:
+        return "verglas"
+    if rafale_max >= RAFALES_VENT:
+        return "vent"
+    if any(code in (73, 75, 86) for code in codes):   # neige moderee ou forte
+        return "neige"
+    return None
 
 
 def heure(texte):
@@ -203,8 +236,8 @@ def interroger(ville):
                    "pressure_msl,wind_speed_10m,wind_direction_10m,"
                    "wind_gusts_10m,weather_code,is_day",
         "hourly": "temperature_2m,apparent_temperature,relative_humidity_2m,"
-                  "pressure_msl,wind_speed_10m,precipitation,"
-                  "precipitation_probability,uv_index",
+                  "pressure_msl,wind_speed_10m,wind_gusts_10m,precipitation,"
+                  "precipitation_probability,uv_index,weather_code",
         "past_hours": 6,
         "forecast_hours": HEURES_COURBE + 2,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
@@ -258,6 +291,7 @@ def interroger(ville):
         },
         "anim": anim,
         "libelle": libelle,
+        "alerte": alerte(heures, i),
         "lever": heure(lever),
         "coucher": heure(coucher),
         "lever_demain": heure(jours["sunrise"][aujourdhui + 1]),

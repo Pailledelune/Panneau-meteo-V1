@@ -836,6 +836,21 @@ local function prevision_ligne(p, x, y, w, h, t)
   end
 end
 
+-- Pastille de vigilance, a la place du libelle ; pulse doucement
+local function pastille(nom, x, y, t)
+  local rouge = nom == "tempête"
+  local c = rouge and TEMP_ROUGE or TEMP_ORANGE
+  local encre = rouge and BLANC or CREUX
+  forme(x, y, 312, 96, 16, c, 0.86 + 0.14 * math.sin(t * 2))
+  trait(x + 22, y + 72, x + 50, y + 24, 6, encre)
+  trait(x + 50, y + 24, x + 78, y + 72, 6, encre)
+  trait(x + 22, y + 72, x + 78, y + 72, 6, encre)
+  trait(x + 50, y + 42, x + 50, y + 56, 5, encre)
+  disque(x + 50, y + 65, 3, encre)
+  texte(sans, "Vigilance", x + 96, y + 40, 24, encre, "g")
+  texte(gras, nom, x + 96, y + 78, ajuste(gras, nom, 34, 200), encre, "g")
+end
+
 -- Temperature actuelle : grand thermometre, valeur, libelle et tendance
 local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   local e = meteo.ecarts or {}
@@ -843,7 +858,11 @@ local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   place(xt, cy - 8, 0.82, thermometre, meteo.temperature, t)
   local v = meteo.temperature and entier(meteo.temperature) or "--"
   temperature(gras, meteo.temperature, xv, cy + 58, ajuste(gras, v, 135, 230), BLANC, "d")
-  libelle(libelle_meteo(ts), xl, cy - 20, 34, 310)
+  if meteo.alerte then
+    pastille(meteo.alerte, xl, cy - 92, t)
+  else
+    libelle(libelle_meteo(ts), xl, cy - 20, 34, 310)
+  end
   fleche(xf, cy + 64, e.temperature, 0.5, 1.7)
   ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
 end

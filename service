@@ -266,6 +266,8 @@ def interroger(ville):
     lever, coucher = jours["sunrise"][aujourdhui], jours["sunset"][aujourdhui]
     duree = minutes(coucher) - minutes(lever)
     veille = minutes(jours["sunset"][aujourdhui - 1]) - minutes(jours["sunrise"][aujourdhui - 1])
+    lever_demain, coucher_demain = jours["sunrise"][aujourdhui + 1], jours["sunset"][aujourdhui + 1]
+    duree_demain = minutes(coucher_demain) - minutes(lever_demain)
     air, ecart_air = qualite_air(ville)
 
     return {
@@ -294,9 +296,12 @@ def interroger(ville):
         "alerte": alerte(heures, i),
         "lever": heure(lever),
         "coucher": heure(coucher),
-        "lever_demain": heure(jours["sunrise"][aujourdhui + 1]),
+        "lever_demain": heure(lever_demain),
+        "coucher_demain": heure(coucher_demain),
         "duree_jour": duree,
         "ecart_jour": duree - veille,
+        "duree_demain": duree_demain,
+        "ecart_demain": duree_demain - duree,
         "pleine_lune": pleine_lune(time.time(), decalage),
         "courbe": courbe(heures, i, jours, actuel["temperature_2m"]),
         "previsions": [prevision(jours, n) for n in range(aujourdhui + 1, aujourdhui + 6)],

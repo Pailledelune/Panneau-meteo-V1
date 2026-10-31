@@ -46,6 +46,11 @@ local COLONNES = {
 }
 local BASES = {[true] = texture_hex(0x27, 0x51, 0x7A), [false] = texture_hex(0x0A, 0x1F, 0x36)}
 
+-- Colonne de 12 h : repere du milieu du jour
+local MIDI = texture_hex(0x7E, 0x69, 0x3C)
+local MIDI_BASE = texture_hex(0x5E, 0x4E, 0x2C)
+local MIDI_FOND = {0.494, 0.412, 0.235}
+
 -- Reglages (tableau de bord info-beamer) et meteo (service)
 local orientation = "paysage"
 local duree_ville = 20
@@ -193,15 +198,6 @@ local function couleur_temp(v)
   if n <= 30 then return TEMP_ORANGE end
   return TEMP_ROUGE
 end
-
--- Etages du mercure, de "de" a "a" degres
-local ETAGES = {
-  {de = -100, a = 0.5,  c = BLANC},
-  {de = 0.5,  a = 11.5, c = BLEU},
-  {de = 11.5, a = 20.5, c = JAUNE},
-  {de = 20.5, a = 30.5, c = TEMP_ORANGE},
-  {de = 30.5, a = 100,  c = TEMP_ROUGE},
-}
 
 -- Le degre est dessine en anneau, sur le fond de la tuile
 local function anneau(x, y, r, c, fond)
@@ -395,37 +391,24 @@ end
 -- Animations des mesures
 ------------------------------------------------------------------------
 
--- Position dans le tube (0 a 1) : le blanc reste court pour laisser la
--- place aux couleurs
-local PALIERS = {{-20, 0}, {0.5, 0.12}, {11.5, 0.40}, {20.5, 0.62}, {30.5, 0.84}, {40, 1}}
-
-local function rang_mercure(x)
-  if x <= PALIERS[1][1] then return 0 end
-  for i = 2, #PALIERS do
-    local a, b = PALIERS[i - 1], PALIERS[i]
-    if x <= b[1] then return a[2] + (b[2] - a[2]) * (x - a[1]) / (b[1] - a[1]) end
-  end
-  return 1
+-- Mercure d'une seule couleur, a une hauteur fixe pour chaque tranche de
+-- l'echelle des temperatures
+local function hauteur_mercure(v)
+  local n = arrondi(v or 0)
+  if n <= 0 then return 28 end
+  if n <= 11 then return 52 end
+  if n <= 20 then return 76 end
+  if n <= 30 then return 100 end
+  return 122
 end
 
--- Le mercure monte en traversant les couleurs : boule blanche, puis chaque
--- etage de l'echelle des temperatures jusqu'au rouge en haut du tube
 local function thermometre(v, t)
   forme(-13, -92, 26, 130, 13, CREUX)
   disque(0, 58, 32, CREUX)
-  local n = v or 0
-  local function hauteur(x)
-    return 16 + rang_mercure(x) * 104
-  end
-  local niveau = hauteur(n) + 2 * math.sin(t * 1.5)
-  for i = #ETAGES, 1, -1 do
-    local e = ETAGES[i]
-    if n > e.de then
-      local h = math.min(niveau, hauteur(e.a))
-      forme(-7, 46 - h, 14, h + 14, 7, e.c)
-    end
-  end
-  disque(0, 58, 24, BLANC)
+  local c = couleur_temp(v)
+  local h = hauteur_mercure(v) + 1.5 * math.sin(t * 1.5)
+  forme(-7, 46 - h, 14, h + 14, 7, c)
+  disque(0, 58, 24, c)
 end
 
 local function goutte(v, t)
@@ -630,15 +613,19 @@ local function mesures(case, age, maintenant, t)
   local couche = minutes(m.coucher)
   tuile_mesure(x, y, w, h, "Soleil", course, minutes(m.lever), couche,
     minutes(m.lever_demain), maintenant, t)
+  -- Lever, coucher et duree du jour ; apres le coucher, ceux de demain
+  local demain = couche and maintenant >= couche and m.lever_demain and m.duree_demain
+  local lever_vu = demain and m.lever_demain or m.lever
+  local coucher_vu = demain and m.coucher_demain or m.coucher
+  local duree_vue = demain and m.duree_demain or m.duree_jour
+  local ecart_vu = demain and m.ecart_demain or m.ecart_jour
   local ts = h * 0.105
-  texte(gras, m.lever or "--", x + 14, y + h * 0.77, ts, OR, "g")
-  texte(gras, m.coucher or "--", x + w - 14, y + h * 0.77, ts, OR, "d")
-  fleche(x + w / 2, y + h * 0.77 - ts * 0.33, m.ecart_jour, 1, 0.9)
-  if couche and maintenant >= couche and m.lever_demain then
-    detail(x, y, w, h, "Lever demain " .. m.lever_demain)
-  elseif m.duree_jour then
-    detail(x, y, w, h, string.format("Jour %d h %02d, %s min",
-      math.floor(m.duree_jour / 60), m.duree_jour % 60, signe(m.ecart_jour or 0)))
+  texte(gras, lever_vu or "--", x + 14, y + h * 0.77, ts, OR, "g")
+  texte(gras, coucher_vu or "--", x + w - 14, y + h * 0.77, ts, OR, "d")
+  fleche(x + w / 2, y + h * 0.77 - ts * 0.33, ecart_vu, 1, 0.9)
+  if duree_vue then
+    detail(x, y, w, h, string.format("%s %d h %02d, %s min", demain and "Demain" or "Jour",
+      math.floor(duree_vue / 60), duree_vue % 60, signe(ecart_vu or 0)))
   end
 
   x, y, w, h = case(5)
@@ -676,7 +663,7 @@ local function legende_pluie(x, y, taille)
   texte(sans, "% pluie", x + 44, y, taille, PALE, "g")
 end
 
-local function courbe(ox, oy, w, h, gauche, colonne)
+local function courbe(ox, oy, w, h, gauche, colonne, d)
   tuile(ox, oy, w, h)
   if colonne then
     texte(sans, "Prochaines", ox + 24, oy + 58, 24, PALE, "g")
@@ -712,10 +699,13 @@ local function courbe(ox, oy, w, h, gauche, colonne)
   local taille = math.min(20, bw * 0.52)
   for i, p in ipairs(points) do
     local x = ox + gauche + (i - 1) * bw
-    COLONNES[p.j][p.h % 2]:draw(x, haut, x + bw - 2, bas)
-    BASES[p.j]:draw(x, bas, x + bw - 2, bas + 30)
-    texte(p.j and gras or sans, string.format("%02d", p.h), x + bw / 2 - 1, bas + 22, taille,
-          p.j and BLANC or PALE, "c")
+    local midi = p.h == 12
+    local colonne_tex = midi and MIDI or COLONNES[p.j][p.h % 2]
+    local base_tex = midi and MIDI_BASE or BASES[p.j]
+    colonne_tex:draw(x, haut, x + bw - 2, bas)
+    base_tex:draw(x, bas, x + bw - 2, bas + 30)
+    texte((p.j or midi) and gras or sans, string.format("%02d", p.h), x + bw / 2 - 1, bas + 22, taille,
+          (p.j or midi) and BLANC or PALE, "c")
     if p.p > 0 then
       local b = p.p * 0.6
       forme(x + bw * 0.2, bas - b, bw * 0.6 - 2, b, 3, BLEU, 0.8)
@@ -725,17 +715,26 @@ local function courbe(ox, oy, w, h, gauche, colonne)
     end
   end
 
-  -- Ligne, points colores, valeur toutes les 3 heures
+  -- Ligne, puis point colore et valeur a chaque heure
   for i = 2, #points do
     trait(px(i - 1), py(points[i - 1].t), px(i), py(points[i].t), 4, OR)
   end
+  local valeur_t = math.min(22, bw * 0.40)
   for i, p in ipairs(points) do
     local c = couleur_temp(p.t)
-    if (i - 1) % 3 == 0 then
-      disque(px(i), py(p.t), 6, c)
-      temperature(gras, p.t, px(i), py(p.t) - 13, 22, c, "c", p.j and {0.22, 0.42, 0.60} or {0.05, 0.15, 0.25})
-    else
-      disque(px(i), py(p.t), 3.5, c)
+    local fond = p.j and {0.22, 0.42, 0.60} or {0.05, 0.15, 0.25}
+    if p.h == 12 then fond = MIDI_FOND end
+    disque(px(i), py(p.t), 5, c)
+    temperature(gras, p.t, px(i), py(p.t) - 13, valeur_t, c, "c", fond)
+  end
+
+  -- Repere de l'heure reelle dans la colonne de l'heure en cours
+  for i, p in ipairs(points) do
+    if p.h == d.hour then
+      local x = ox + gauche + (i - 1 + d.min / 60) * (bw)
+      forme(x - 1.5, haut, 3, bas - haut, 0, BLANC, 0.9)
+      disque(x, haut + 6, 6, BLANC)
+      break
     end
   end
 end
@@ -897,7 +896,7 @@ local function paysage(d, age, t, ts, rang)
 
   mesures(function(i) return 40 + i * 231.14, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 502, 1840, 215, 170, true)
+  courbe(40, 502, 1840, 215, 170, true, d)
 
   for i, p in ipairs(meteo.previsions or {}) do
     prevision_tuile(p, 40 + (i - 1) * 371, 733, 356, 317, t)
@@ -921,7 +920,7 @@ local function portrait(d, age, t, ts, rang)
     return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
   end, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 1037, 1000, 225, 14, false)
+  courbe(40, 1037, 1000, 225, 14, false, d)
 
   for i, p in ipairs(meteo.previsions or {}) do
     prevision_ligne(p, 40, 1278 + (i - 1) * 124, 1000, 112, t)

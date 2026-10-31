@@ -715,6 +715,16 @@ local function courbe(ox, oy, w, h, gauche, colonne, d)
     end
   end
 
+  -- Repere de l'heure reelle, sous la courbe et ses valeurs
+  for i, p in ipairs(points) do
+    if p.h == d.hour then
+      local x = ox + gauche + (i - 1 + d.min / 60) * (bw)
+      forme(x - 1.5, haut, 3, bas - haut, 0, BLANC, 0.9)
+      disque(x, haut + 6, 6, BLANC)
+      break
+    end
+  end
+
   -- Ligne, puis point colore et valeur a chaque heure
   for i = 2, #points do
     trait(px(i - 1), py(points[i - 1].t), px(i), py(points[i].t), 4, OR)
@@ -726,16 +736,6 @@ local function courbe(ox, oy, w, h, gauche, colonne, d)
     if p.h == d.hour then fond = ACTUELLE_FOND[p.j] end
     disque(px(i), py(p.t), 5, c)
     temperature(gras, p.t, px(i), py(p.t) - 13, valeur_t, c, "c", fond)
-  end
-
-  -- Repere de l'heure reelle dans la colonne de l'heure en cours
-  for i, p in ipairs(points) do
-    if p.h == d.hour then
-      local x = ox + gauche + (i - 1 + d.min / 60) * (bw)
-      forme(x - 1.5, haut, 3, bas - haut, 0, BLANC, 0.9)
-      disque(x, haut + 6, 6, BLANC)
-      break
-    end
   end
 end
 
@@ -922,7 +922,7 @@ end
 local function prevision_tuile(p, x, y, w, h, t)
   tuile(x, y, w, h)
   texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 44, 38, PALE, "c")
-  animation(p.anim, x + w / 2 - 72, y + 110, 0.88, t)
+  animation(p.anim, x + w / 2 - 72, y + 114, 0.68, t)
   temperature(gras, p.max, x + w - 36, y + 100, 64, couleur_temp(p.max), "d")
   temperature(sans, p.min, x + w - 36, y + 156, 44, couleur_temp(p.min), "d")
   if p.libelle then
@@ -974,11 +974,11 @@ local function temps_actuel(x, cy, ts, t)
     texte(sans, l, x + 160, cy + 80, ajuste(sans, l, 28, 290), PALE, "c")
   end
 
-  place(x + 372, cy - 8, 0.82, thermometre, meteo.temperature, t)
+  place(x + 424, cy - 8, 0.82, thermometre, meteo.temperature, t)
   local v = meteo.temperature and entier(meteo.temperature) or "--"
-  temperature(gras, meteo.temperature, x + 418, cy + 34, ajuste(gras, v, 120, 170), BLANC, "g")
-  fleche(x + 430, cy + 70, e.temperature, 0.5, 1.4)
-  ecart_degres(sans, e.temperature, x + 454, cy + 80, 28, BLANC, "g")
+  temperature(gras, meteo.temperature, x + 470, cy + 34, ajuste(gras, v, 120, 170), BLANC, "g")
+  fleche(x + 482, cy + 70, e.temperature, 0.5, 1.4)
+  ecart_degres(sans, e.temperature, x + 506, cy + 80, 28, BLANC, "g")
 end
 
 -- Heure en deux parties : les deux points s'allument une seconde sur deux.
@@ -1012,16 +1012,18 @@ local function paysage(d, age, t, ts, rang)
   local nom = meteo.ville or "Sarrebourg"
 
   tuile(40, 30, 860, 205)
-  texte(gras, nom, 80, 88, ajuste(gras, nom, 54, 480), OR, "g")
-  points_villes(92, 112, rang)
+  local taille_nom = ajuste(gras, nom, 54, 400)
+  texte(gras, nom, 80, 88, taille_nom, OR, "g")
+  points_villes(80 + gras:width(nom, taille_nom) + 28, 70, rang)
   disque_secondes(heure(d, 80, 221, 118, "g") + 58, 170, 44, d.sec)
   texte(gras, JOURS[d.wday - 1], 860, 88, 58, BLANC, "d")
   texte(gras, tostring(d.day), 860, 168, 92, BLANC, "d")
   local mois = MOIS[d.month] .. " " .. d.year
   texte(sans, mois, 860, 216, ajuste(sans, mois, 42, 370), PALE, "d")
 
-  tuile(920, 30, 722, 205)
-  temps_actuel(940, 132, ts, t)
+  -- Finit au droit de la tuile Indice UV
+  tuile(920, 30, 729, 205)
+  temps_actuel(945, 132, ts, t)
 
   tuile(1658, 30, 222, 205)
   bloc_saison(d, 1769, 132, 206, t)
@@ -1046,8 +1048,8 @@ local function portrait(d, age, t, ts, rang)
   disque_secondes(heure(d, 540, 245, 130, "c") + 62, 197, 48, d.sec)
   texte(sans, date, 540, 322, ajuste(sans, date, 54, 920), PALE, "c")
 
-  tuile(40, 366, 744, 215)
-  temps_actuel(80, 475, ts, t)
+  tuile(40, 366, 747, 215)
+  temps_actuel(65, 475, ts, t)
 
   tuile(800, 366, 240, 215)
   bloc_saison(d, 920, 475, 224, t)

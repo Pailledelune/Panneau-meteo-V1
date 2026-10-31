@@ -304,11 +304,20 @@ def interroger(ville):
     }
 
 
+def sans_vides(valeur):
+    """Retire les champs sans valeur : en Lua, un null JSON n'est pas nil"""
+    if isinstance(valeur, dict):
+        return dict((k, sans_vides(v)) for k, v in valeur.items() if v is not None)
+    if isinstance(valeur, list):
+        return [sans_vides(v) for v in valeur]
+    return valeur
+
+
 def ecrire(villes):
     # Ecriture dans un fichier temporaire puis renommage : node.lua ne lit
     # jamais un fichier a moitie ecrit
     with open("meteo.json.tmp", "w") as f:
-        json.dump({"villes": villes}, f)
+        json.dump({"villes": sans_vides(villes)}, f)
     os.rename("meteo.json.tmp", "meteo.json")
 
 

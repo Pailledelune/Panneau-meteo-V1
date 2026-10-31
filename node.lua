@@ -395,6 +395,19 @@ end
 -- Animations des mesures
 ------------------------------------------------------------------------
 
+-- Position dans le tube (0 a 1) : le blanc reste court pour laisser la
+-- place aux couleurs
+local PALIERS = {{-20, 0}, {0.5, 0.12}, {11.5, 0.40}, {20.5, 0.62}, {30.5, 0.84}, {40, 1}}
+
+local function rang_mercure(x)
+  if x <= PALIERS[1][1] then return 0 end
+  for i = 2, #PALIERS do
+    local a, b = PALIERS[i - 1], PALIERS[i]
+    if x <= b[1] then return a[2] + (b[2] - a[2]) * (x - a[1]) / (b[1] - a[1]) end
+  end
+  return 1
+end
+
 -- Le mercure monte en traversant les couleurs : boule blanche, puis chaque
 -- etage de l'echelle des temperatures jusqu'au rouge en haut du tube
 local function thermometre(v, t)
@@ -402,7 +415,7 @@ local function thermometre(v, t)
   disque(0, 58, 32, CREUX)
   local n = v or 0
   local function hauteur(x)
-    return 16 + math.max(0, math.min(1, (x + 20) / 60)) * 104
+    return 16 + rang_mercure(x) * 104
   end
   local niveau = hauteur(n) + 2 * math.sin(t * 1.5)
   for i = #ETAGES, 1, -1 do
@@ -858,7 +871,7 @@ local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   place(xt, cy - 8, 0.82, thermometre, meteo.temperature, t)
   local v = meteo.temperature and entier(meteo.temperature) or "--"
   temperature(gras, meteo.temperature, xv, cy + 58, ajuste(gras, v, 135, 230), BLANC, "d")
-  if meteo.alerte then
+  if type(meteo.alerte) == "string" then
     pastille(meteo.alerte, xl, cy - 92, t)
   else
     libelle(libelle_meteo(ts), xl, cy - 20, 34, 310)

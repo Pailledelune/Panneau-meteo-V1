@@ -1001,6 +1001,8 @@ local function disque_secondes(x, y, r, sec)
     trait(x + c * r * 0.78, y + s * r * 0.78, x + c * r, y + s * r, r * 0.055,
           i <= sec and BLANC or CREUX)
   end
+  local taille = r * 0.62
+  texte(gras, string.format("%02d", sec), x, y + taille * 0.42, taille, BLANC, "c")
 end
 
 -- Chaque prevision a son propre rythme pour ne pas bouger en meme temps

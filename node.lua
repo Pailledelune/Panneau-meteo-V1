@@ -775,17 +775,40 @@ end
 -- Saison
 ------------------------------------------------------------------------
 
--- Dates astronomiques moyennes (a un jour pres selon les annees) ;
--- dans l'hemisphere sud, les saisons sont inversees
+-- Equinoxes et solstices (Meeus, table 27.B), a quelques minutes pres
+local EPHEMERIDES = {
+  {2451623.80984, 365242.37404,  0.05169, -0.00411, -0.00057},
+  {2451716.56767, 365241.62603,  0.00325,  0.00888, -0.00030},
+  {2451810.21715, 365242.01767, -0.11575,  0.00337,  0.00078},
+  {2451900.05952, 365242.74049, -0.06223, -0.00823,  0.00032},
+}
+
+local function debuts_saisons(an)
+  local y = (an - 2000) / 1000
+  local r = {}
+  for i, c in ipairs(EPHEMERIDES) do
+    local jd = c[1] + y * (c[2] + y * (c[3] + y * (c[4] + y * c[5])))
+    r[i] = (jd - 2440587.5) * 86400
+  end
+  return r
+end
+
+local NOMS_SAISONS = {"Printemps", "Été", "Automne", "Hiver"}
+
+-- Nom, debut et fin de la saison ; dans l'hemisphere sud, elles sont inversees
 local function saison(d)
-  local j = d.month * 100 + d.day
-  local rang = 1
-  if j >= 1221 or j < 320 then rang = 1
-  elseif j < 621 then rang = 2
-  elseif j < 923 then rang = 3
-  else rang = 4 end
-  if meteo.sud == true then rang = (rang + 1) % 4 + 1 end
-  return ({"Hiver", "Printemps", "Été", "Automne"})[rang]
+  local b = debuts_saisons(d.year)
+  local suivante = debuts_saisons(d.year + 1)[1]
+  local precedente = debuts_saisons(d.year - 1)[4]
+  local decalage = d.ts - d.utc
+  local i, debut, fin
+  if d.utc < b[1] then i, debut, fin = 4, precedente, b[1]
+  elseif d.utc < b[2] then i, debut, fin = 1, b[1], b[2]
+  elseif d.utc < b[3] then i, debut, fin = 2, b[2], b[3]
+  elseif d.utc < b[4] then i, debut, fin = 3, b[3], b[4]
+  else i, debut, fin = 4, b[4], suivante end
+  if meteo.sud == true then i = (i + 1) % 4 + 1 end
+  return NOMS_SAISONS[i], os.date("!*t", debut + decalage), os.date("!*t", fin + decalage - 86400)
 end
 
 -- Feuille balancee par le vent : contour en arcs et nervure
@@ -823,11 +846,13 @@ local function picto_saison(nom, x, y, r, t)
   else feuille(x, y, r, t) end
 end
 
--- Picto de la saison centre sur x, y ; son nom en dessous
-local function bloc_saison(d, x, y, t)
-  local nom = saison(d)
-  picto_saison(nom, x, y, 30, t)
-  texte(sans, nom, x, y + 66, 26, PALE, "c")
+-- Picto de la saison, son nom, puis ses dates de debut et de fin
+local function bloc_saison(d, x, cy, largeur, t)
+  local nom, debut, fin = saison(d)
+  local dates = debut.day .. " " .. MOIS_COURTS[debut.month] .. " - " .. fin.day .. " " .. MOIS_COURTS[fin.month]
+  picto_saison(nom, x, cy - 48, 30, t)
+  texte(gras, nom, x, cy + 24, 34, BLANC, "c")
+  texte(sans, dates, x, cy + 64, ajuste(sans, dates, 24, largeur), PALE, "c")
 end
 
 ------------------------------------------------------------------------
@@ -878,23 +903,6 @@ local function libelle_meteo(t)
   if not meteo.maj then return "Connexion à la météo" end
   if t - meteo.maj > 3 * 3600 then return "Météo non actualisée" end
   return meteo.libelle or ""
-end
-
--- Coupe un libelle en deux lignes si besoin ; y = milieu du bloc
-local function libelle(t, x, y, taille, largeur)
-  if sans:width(t, taille) <= largeur then
-    texte(sans, t, x, y + taille * 0.35, taille, PALE, "g")
-    return
-  end
-  local a, b = t:match("^(%S+)%s+(.+)$")
-  if not a then
-    local s = ajuste(sans, t, taille, largeur)
-    texte(sans, t, x, y + s * 0.35, s, PALE, "g")
-    return
-  end
-  local s = math.min(ajuste(sans, a, taille, largeur), ajuste(sans, b, taille, largeur))
-  texte(sans, a, x, y - s * 0.20, s, PALE, "g")
-  texte(sans, b, x, y + s * 1.05, s, PALE, "g")
 end
 
 -- Points indiquant la ville affichee ; x = premier point ou milieu
@@ -954,24 +962,45 @@ local function pastille(nom, x, y, t)
   texte(gras, nom, x + 96, y + 78, ajuste(gras, nom, 34, 200), encre, "g")
 end
 
--- Temperature actuelle : grand thermometre, valeur, libelle et tendance.
--- Le libelle suit la largeur de la valeur pour ne pas laisser de vide
-local function temps_actuel(xa, xt, xv, cy, ts, t)
+-- Tuile du temps actuel : le ciel et son libelle (ou la vigilance), puis le
+-- thermometre et la temperature
+local function temps_actuel(x, cy, ts, t)
   local e = meteo.ecarts or {}
-  animation(meteo.anim or "nuageux", xa, cy, 0.90, t)
-  place(xt, cy - 8, 0.82, thermometre, meteo.temperature, t)
-  local v = meteo.temperature and entier(meteo.temperature) or "--"
-  local taille = ajuste(gras, v, 135, 230)
-  temperature(gras, meteo.temperature, xv, cy + 58, taille, BLANC, "g")
-  local xl = xv + gras:width(v, taille) + taille * 0.30 + 44
-  local xf = xl + 16
   if type(meteo.alerte) == "string" then
-    pastille(meteo.alerte, xl, cy - 92, t)
+    pastille(meteo.alerte, x + 8, cy - 48, t)
   else
-    libelle(libelle_meteo(ts), xl, cy - 20, 34, 310)
+    animation(meteo.anim or "nuageux", x + 160, cy - 24, 0.72, t)
+    local l = libelle_meteo(ts)
+    texte(sans, l, x + 160, cy + 80, ajuste(sans, l, 28, 290), PALE, "c")
   end
-  fleche(xf, cy + 64, e.temperature, 0.5, 1.7)
-  ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
+
+  place(x + 372, cy - 8, 0.82, thermometre, meteo.temperature, t)
+  local v = meteo.temperature and entier(meteo.temperature) or "--"
+  temperature(gras, meteo.temperature, x + 418, cy + 34, ajuste(gras, v, 120, 170), BLANC, "g")
+  fleche(x + 430, cy + 70, e.temperature, 0.5, 1.4)
+  ecart_degres(sans, e.temperature, x + 454, cy + 80, 28, BLANC, "g")
+end
+
+-- Heure en deux parties : les deux points s'allument une seconde sur deux.
+-- Rend l'abscisse de sa fin, pour y accoler le disque des secondes
+local function heure(d, x, y, taille, ancre)
+  local h, m = string.format("%02d", d.hour), string.format("%02d", d.min)
+  local wh, wp = gras:width(h, taille), gras:width(":", taille)
+  if ancre == "c" then x = x - (wh + wp + gras:width(m, taille)) / 2 end
+  texte(gras, h, x, y, taille, BLANC, "g")
+  if d.sec % 2 == 0 then texte(gras, ":", x + wh, y, taille, BLANC, "g") end
+  texte(gras, m, x + wh + wp, y, taille, BLANC, "g")
+  return x + wh + wp + gras:width(m, taille)
+end
+
+-- Disque de 60 segments : chaque seconde passee passe du bleu fonce au blanc
+local function disque_secondes(x, y, r, sec)
+  for i = 0, 59 do
+    local a = math.rad(-90 + i * 6)
+    local c, s = math.cos(a), math.sin(a)
+    trait(x + c * r * 0.78, y + s * r * 0.78, x + c * r, y + s * r, r * 0.055,
+          i <= sec and BLANC or CREUX)
+  end
 end
 
 -- Chaque prevision a son propre rythme pour ne pas bouger en meme temps
@@ -983,21 +1012,23 @@ local function paysage(d, age, t, ts, rang)
   local nom = meteo.ville or "Sarrebourg"
 
   tuile(40, 30, 860, 205)
-  texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 350), OR, "g")
-  points_villes(92, 100, rang)
-  texte(gras, string.format("%02d:%02d", d.hour, d.min), 80, 212, 118, BLANC, "g")
+  texte(gras, nom, 80, 88, ajuste(gras, nom, 54, 480), OR, "g")
+  points_villes(92, 112, rang)
+  disque_secondes(heure(d, 80, 221, 118, "g") + 58, 170, 44, d.sec)
   texte(gras, JOURS[d.wday - 1], 860, 88, 58, BLANC, "d")
   texte(gras, tostring(d.day), 860, 168, 92, BLANC, "d")
-  bloc_saison(d, 480, 96, t)
   local mois = MOIS[d.month] .. " " .. d.year
   texte(sans, mois, 860, 216, ajuste(sans, mois, 42, 370), PALE, "d")
 
-  tuile(920, 30, 960, 205)
-  temps_actuel(1090, 1215, 1262, 132, ts, t)
+  tuile(920, 30, 722, 205)
+  temps_actuel(940, 132, ts, t)
+
+  tuile(1658, 30, 222, 205)
+  bloc_saison(d, 1769, 132, 206, t)
 
   mesures(function(i) return 40 + i * 231.14, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 502, 1840, 240, 170, true, d)
+  courbe(40, 502, 1840, 240, 194, true, d)
   annee(40, 760, 1840, d)
 
   for i, p in ipairs(meteo.previsions or {}) do
@@ -1010,14 +1041,16 @@ local function portrait(d, age, t, ts, rang)
   local date = JOURS[d.wday - 1] .. " " .. d.day .. " " .. MOIS[d.month] .. " " .. d.year
 
   tuile(40, 30, 1000, 320)
-  texte(gras, nom, 540, 92, ajuste(gras, nom, 54, 920), OR, "c")
-  points_villes(540, 118, rang, true)
-  texte(gras, string.format("%02d:%02d", d.hour, d.min), 540, 245, 130, BLANC, "c")
-  bloc_saison(d, 900, 180, t)
+  texte(gras, nom, 540, 96, ajuste(gras, nom, 66, 920), OR, "c")
+  points_villes(540, 124, rang, true)
+  disque_secondes(heure(d, 540, 245, 130, "c") + 62, 197, 48, d.sec)
   texte(sans, date, 540, 322, ajuste(sans, date, 54, 920), PALE, "c")
 
-  tuile(40, 366, 1000, 215)
-  temps_actuel(200, 325, 372, 475, ts, t)
+  tuile(40, 366, 744, 215)
+  temps_actuel(80, 475, ts, t)
+
+  tuile(800, 366, 240, 215)
+  bloc_saison(d, 920, 475, 224, t)
 
   mesures(function(i)
     return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
@@ -1043,7 +1076,9 @@ function node.render()
   meteo = villes[rang] or {}
 
   local utc = os.date("!*t", ts)
-  local d   = os.date("!*t", ts + (meteo.decalage or decalage_paris(utc)))
+  local local_ts = ts + (meteo.decalage or decalage_paris(utc))
+  local d   = os.date("!*t", local_ts)
+  d.utc, d.ts = ts, local_ts
   teinte(d.hour * 60 + d.min)
 
   gl.clear(FOND[1], FOND[2], FOND[3], 1)

@@ -46,10 +46,10 @@ local COLONNES = {
 }
 local BASES = {[true] = texture_hex(0x27, 0x51, 0x7A), [false] = texture_hex(0x0A, 0x1F, 0x36)}
 
--- Colonne de 12 h : repere du milieu du jour
-local MIDI = texture_hex(0x7E, 0x69, 0x3C)
-local MIDI_BASE = texture_hex(0x5E, 0x4E, 0x2C)
-local MIDI_FOND = {0.494, 0.412, 0.235}
+-- Colonne de l'heure en cours : meme teinte que les autres, un ton plus clair
+local ACTUELLE = {[true] = texture_hex(0x4B, 0x82, 0xB5), [false] = texture_hex(0x1D, 0x43, 0x6B)}
+local ACTUELLE_BASE = {[true] = texture_hex(0x33, 0x65, 0x94), [false] = texture_hex(0x15, 0x35, 0x55)}
+local ACTUELLE_FOND = {[true] = {0.294, 0.510, 0.710}, [false] = {0.114, 0.263, 0.420}}
 
 -- Reglages (tableau de bord info-beamer) et meteo (service)
 local orientation = "paysage"
@@ -659,7 +659,7 @@ local function legende_temp(x, y, taille)
 end
 
 local function legende_pluie(x, y, taille)
-  forme(x, y - taille * 0.78, 30, taille * 0.86, 3, BLEU, 0.8)
+  forme(x, y - taille * 0.78, 30, taille * 0.86, 3, BLANC, 0.7)
   texte(sans, "% pluie", x + 44, y, taille, PALE, "g")
 end
 
@@ -699,18 +699,18 @@ local function courbe(ox, oy, w, h, gauche, colonne, d)
   local taille = math.min(20, bw * 0.52)
   for i, p in ipairs(points) do
     local x = ox + gauche + (i - 1) * bw
-    local midi = p.h == 12
-    local colonne_tex = midi and MIDI or COLONNES[p.j][p.h % 2]
-    local base_tex = midi and MIDI_BASE or BASES[p.j]
+    local actuelle = p.h == d.hour
+    local colonne_tex = actuelle and ACTUELLE[p.j] or COLONNES[p.j][p.h % 2]
+    local base_tex = actuelle and ACTUELLE_BASE[p.j] or BASES[p.j]
     colonne_tex:draw(x, haut, x + bw - 2, bas)
     base_tex:draw(x, bas, x + bw - 2, bas + 30)
-    texte((p.j or midi) and gras or sans, string.format("%02d", p.h), x + bw / 2 - 1, bas + 22, taille,
-          (p.j or midi) and BLANC or PALE, "c")
+    texte((p.j or actuelle) and gras or sans, string.format("%02d", p.h), x + bw / 2 - 1, bas + 22, taille,
+          (p.j or actuelle) and BLANC or PALE, "c")
     if p.p > 0 then
       local b = p.p * 0.6
-      forme(x + bw * 0.2, bas - b, bw * 0.6 - 2, b, 3, BLEU, 0.8)
+      forme(x + bw * 0.2, bas - b, bw * 0.6 - 2, b, 3, BLANC, 0.7)
       if p.p >= 10 then
-        texte(sans, entier(p.p), x + bw / 2 - 1, bas - b - 5, taille * 0.9, BLEU, "c")
+        texte(sans, entier(p.p), x + bw / 2 - 1, bas - b - 5, taille * 0.9, BLANC, "c")
       end
     end
   end
@@ -723,7 +723,7 @@ local function courbe(ox, oy, w, h, gauche, colonne, d)
   for i, p in ipairs(points) do
     local c = couleur_temp(p.t)
     local fond = p.j and {0.22, 0.42, 0.60} or {0.05, 0.15, 0.25}
-    if p.h == 12 then fond = MIDI_FOND end
+    if p.h == d.hour then fond = ACTUELLE_FOND[p.j] end
     disque(px(i), py(p.t), 5, c)
     temperature(gras, p.t, px(i), py(p.t) - 13, valeur_t, c, "c", fond)
   end
@@ -737,6 +737,97 @@ local function courbe(ox, oy, w, h, gauche, colonne, d)
       break
     end
   end
+end
+
+------------------------------------------------------------------------
+-- Ligne de l'annee
+------------------------------------------------------------------------
+
+local INITIALES = {"J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"}
+
+-- Une bande par mois, posee sur le fond de page : ce n'est pas une mesure
+local function annee(x, y, w, d)
+  local bissextile = d.year % 4 == 0 and (d.year % 100 ~= 0 or d.year % 400 == 0)
+  local jours = {31, bissextile and 29 or 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+  local total = bissextile and 366 or 365
+  local ecoule = d.yday - 1 + (d.hour + d.min / 60) / 24
+
+  texte(sans, tostring(d.year), x, y + 22, 22, PALE, "g")
+  local gauche, droite = x + 80, x + w - 280
+  local debut = 0
+  for i, n in ipairs(jours) do
+    local x1 = gauche + (droite - gauche) * debut / total
+    local x2 = gauche + (droite - gauche) * (debut + n) / total - 4
+    forme(x1, y + 2, x2 - x1, 22, 4, TUILE)
+    local f = math.max(0, math.min(1, (ecoule - debut) / n))
+    if f > 0 then forme(x1, y + 2, (x2 - x1) * f, 22, 4, PALE) end
+    texte(gras, INITIALES[i], (x1 + x2) / 2, y + 19, 16, f >= 0.5 and CREUX or PALE, "c")
+    debut = debut + n
+  end
+
+  local reste = total - d.yday
+  local t = reste > 1 and reste .. " jours restants" or (reste == 1 and "1 jour restant" or "Dernier jour")
+  texte(gras, arrondi(ecoule / total * 100) .. " %", x + w - 262, y + 22, 22, PALE, "g")
+  texte(sans, t, x + w, y + 22, 22, PALE, "d")
+end
+
+------------------------------------------------------------------------
+-- Saison
+------------------------------------------------------------------------
+
+-- Dates astronomiques moyennes (a un jour pres selon les annees) ;
+-- dans l'hemisphere sud, les saisons sont inversees
+local function saison(d)
+  local j = d.month * 100 + d.day
+  local rang = 1
+  if j >= 1221 or j < 320 then rang = 1
+  elseif j < 621 then rang = 2
+  elseif j < 923 then rang = 3
+  else rang = 4 end
+  if meteo.sud == true then rang = (rang + 1) % 4 + 1 end
+  return ({"Hiver", "Printemps", "Été", "Automne"})[rang]
+end
+
+-- Feuille balancee par le vent : contour en arcs et nervure
+local function feuille(x, y, r, t)
+  gl.pushMatrix()
+  gl.translate(x, y)
+  gl.rotate(-45 + 8 * math.sin(t * 0.8), 0, 0, 1)
+  local px, py = -r, 0
+  for sens = -1, 1, 2 do
+    px, py = -r, 0
+    for i = 1, 8 do
+      local a = i / 8 * math.pi
+      local nx, ny = -r * math.cos(a), sens * r * 0.55 * math.sin(a)
+      trait(px, py, nx, ny, r * 0.16, OR)
+      px, py = nx, ny
+    end
+  end
+  trait(-r * 1.4, 0, r * 0.55, 0, r * 0.14, OR)
+  gl.popMatrix()
+end
+
+local function fleur(x, y, r, t)
+  local o = t * 0.3
+  for i = 0, 4 do
+    local a = o + i * 2 * math.pi / 5
+    disque(x + math.cos(a) * r * 0.62, y + math.sin(a) * r * 0.62, r * 0.42, OR)
+  end
+  disque(x, y, r * 0.34, BLANC)
+end
+
+local function picto_saison(nom, x, y, r, t)
+  if nom == "Hiver" then flocon(x, y, r, t * 0.3)
+  elseif nom == "Printemps" then fleur(x, y, r, t)
+  elseif nom == "Été" then soleil(x, y, r * 0.62, t)
+  else feuille(x, y, r, t) end
+end
+
+-- Picto de la saison centre sur x, y ; son nom en dessous
+local function bloc_saison(d, x, y, t)
+  local nom = saison(d)
+  picto_saison(nom, x, y, 30, t)
+  texte(sans, nom, x, y + 66, 26, PALE, "c")
 end
 
 ------------------------------------------------------------------------
@@ -822,15 +913,15 @@ end
 
 local function prevision_tuile(p, x, y, w, h, t)
   tuile(x, y, w, h)
-  texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 50, 38, PALE, "c")
-  animation(p.anim, x + w / 2 - 72, y + 150, 0.88, t)
-  temperature(gras, p.max, x + w - 36, y + 140, 64, couleur_temp(p.max), "d")
-  temperature(sans, p.min, x + w - 36, y + 198, 44, couleur_temp(p.min), "d")
+  texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 44, 38, PALE, "c")
+  animation(p.anim, x + w / 2 - 72, y + 110, 0.88, t)
+  temperature(gras, p.max, x + w - 36, y + 100, 64, couleur_temp(p.max), "d")
+  temperature(sans, p.min, x + w - 36, y + 156, 44, couleur_temp(p.min), "d")
   if p.libelle then
-    texte(sans, p.libelle, x + w / 2, y + 264, ajuste(sans, p.libelle, 30, w - 32), BLANC, "c")
+    texte(sans, p.libelle, x + w / 2, y + 206, ajuste(sans, p.libelle, 30, w - 32), BLANC, "c")
   end
   if p.pluie then
-    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 300, 26, BLEU, "c")
+    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 236, 26, BLANC, "c")
   end
 end
 
@@ -844,7 +935,7 @@ local function prevision_ligne(p, x, y, w, h, t)
   temperature(gras, p.max, x + 560, y + 74, 50, couleur_temp(p.max), "c")
   temperature(sans, p.min, x + 690, y + 74, 44, couleur_temp(p.min), "c")
   if p.pluie then
-    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w - 36, y + 72, 36, BLEU, "d")
+    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w - 36, y + 72, 36, BLANC, "d")
   end
 end
 
@@ -863,13 +954,17 @@ local function pastille(nom, x, y, t)
   texte(gras, nom, x + 96, y + 78, ajuste(gras, nom, 34, 200), encre, "g")
 end
 
--- Temperature actuelle : grand thermometre, valeur, libelle et tendance
-local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
+-- Temperature actuelle : grand thermometre, valeur, libelle et tendance.
+-- Le libelle suit la largeur de la valeur pour ne pas laisser de vide
+local function temps_actuel(xa, xt, xv, cy, ts, t)
   local e = meteo.ecarts or {}
   animation(meteo.anim or "nuageux", xa, cy, 0.90, t)
   place(xt, cy - 8, 0.82, thermometre, meteo.temperature, t)
   local v = meteo.temperature and entier(meteo.temperature) or "--"
-  temperature(gras, meteo.temperature, xv, cy + 58, ajuste(gras, v, 135, 230), BLANC, "d")
+  local taille = ajuste(gras, v, 135, 230)
+  temperature(gras, meteo.temperature, xv, cy + 58, taille, BLANC, "g")
+  local xl = xv + gras:width(v, taille) + taille * 0.30 + 44
+  local xf = xl + 16
   if type(meteo.alerte) == "string" then
     pastille(meteo.alerte, xl, cy - 92, t)
   else
@@ -879,27 +974,34 @@ local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
 end
 
+-- Chaque prevision a son propre rythme pour ne pas bouger en meme temps
+local function temps_decale(t, i)
+  return t * (0.9 + 0.07 * i) + i * 2.5
+end
+
 local function paysage(d, age, t, ts, rang)
   local nom = meteo.ville or "Sarrebourg"
 
   tuile(40, 30, 860, 205)
-  texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 420), OR, "g")
+  texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 350), OR, "g")
   points_villes(92, 100, rang)
   texte(gras, string.format("%02d:%02d", d.hour, d.min), 80, 212, 118, BLANC, "g")
   texte(gras, JOURS[d.wday - 1], 860, 88, 58, BLANC, "d")
   texte(gras, tostring(d.day), 860, 168, 92, BLANC, "d")
+  bloc_saison(d, 480, 96, t)
   local mois = MOIS[d.month] .. " " .. d.year
   texte(sans, mois, 860, 216, ajuste(sans, mois, 42, 370), PALE, "d")
 
   tuile(920, 30, 960, 205)
-  temps_actuel(1050, 1215, 1520, 1550, 1566, 132, ts, t)
+  temps_actuel(1090, 1215, 1262, 132, ts, t)
 
   mesures(function(i) return 40 + i * 231.14, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 502, 1840, 215, 170, true, d)
+  courbe(40, 502, 1840, 240, 170, true, d)
+  annee(40, 760, 1840, d)
 
   for i, p in ipairs(meteo.previsions or {}) do
-    prevision_tuile(p, 40 + (i - 1) * 371, 733, 356, 317, t)
+    prevision_tuile(p, 40 + (i - 1) * 371, 804, 356, 246, temps_decale(t, i))
   end
 end
 
@@ -911,19 +1013,21 @@ local function portrait(d, age, t, ts, rang)
   texte(gras, nom, 540, 92, ajuste(gras, nom, 54, 920), OR, "c")
   points_villes(540, 118, rang, true)
   texte(gras, string.format("%02d:%02d", d.hour, d.min), 540, 245, 130, BLANC, "c")
+  bloc_saison(d, 900, 180, t)
   texte(sans, date, 540, 322, ajuste(sans, date, 54, 920), PALE, "c")
 
   tuile(40, 366, 1000, 215)
-  temps_actuel(150, 300, 630, 660, 678, 475, ts, t)
+  temps_actuel(200, 325, 372, 475, ts, t)
 
   mesures(function(i)
     return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
   end, age, d.hour * 60 + d.min, t)
 
   courbe(40, 1037, 1000, 225, 14, false, d)
+  annee(40, 1274, 1000, d)
 
   for i, p in ipairs(meteo.previsions or {}) do
-    prevision_ligne(p, 40, 1278 + (i - 1) * 124, 1000, 112, t)
+    prevision_ligne(p, 40, 1312 + (i - 1) * 118, 1000, 106, temps_decale(t, i))
   end
 end
 

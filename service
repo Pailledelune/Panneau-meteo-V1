@@ -272,6 +272,7 @@ def interroger(ville):
 
     return {
         "ville": ville["name"],
+        "sud": ville["latitude"] < 0,
         "decalage": decalage,
         "temperature": actuel["temperature_2m"],
         "ressenti": actuel["apparent_temperature"],

@@ -613,17 +613,29 @@ end
 -- Courbe des prochaines 24 heures
 ------------------------------------------------------------------------
 
-local function courbe(ox, oy, w, h, gauche, colonne, t)
+-- Legende : un trait pour la temperature, une barre pour le risque de pluie
+local function legende_temp(x, y, taille)
+  trait(x, y - taille * 0.33, x + 30, y - taille * 0.33, 4, OR)
+  texte(sans, "T", x + 44, y, taille, PALE, "g")
+  anneau(x + 44 + sans:width("T", taille) + taille * 0.22, y - taille * 0.62, taille * 0.13, PALE)
+end
+
+local function legende_pluie(x, y, taille)
+  forme(x, y - taille * 0.78, 30, taille * 0.86, 3, BLEU, 0.8)
+  texte(sans, "% pluie", x + 44, y, taille, PALE, "g")
+end
+
+local function courbe(ox, oy, w, h, gauche, colonne)
   tuile(ox, oy, w, h)
   if colonne then
     texte(sans, "Prochaines", ox + 24, oy + 58, 24, PALE, "g")
     texte(sans, "24 heures", ox + 24, oy + 90, 24, PALE, "g")
-    animation("pluie", ox + 62, oy + 150, 0.42, t)
-    texte(sans, "Pluie", ox + 100, oy + 160, 24, BLEU, "g")
+    legende_temp(ox + 24, oy + 146, 22)
+    legende_pluie(ox + 24, oy + 182, 22)
   else
     texte(sans, "Prochaines 24 heures", ox + 24, oy + 36, 26, PALE, "g")
-    animation("pluie", ox + w - 120, oy + 27, 0.24, t)
-    texte(sans, "Pluie", ox + w - 24, oy + 36, 24, BLEU, "d")
+    legende_temp(ox + w - 300, oy + 36, 24)
+    legende_pluie(ox + w - 170, oy + 36, 24)
   end
 
   local points = meteo.courbe
@@ -656,6 +668,9 @@ local function courbe(ox, oy, w, h, gauche, colonne, t)
     if p.p > 0 then
       local b = p.p * 0.6
       forme(x + bw * 0.2, bas - b, bw * 0.6 - 2, b, 3, BLEU, 0.8)
+      if p.p >= 10 then
+        texte(sans, entier(p.p), x + bw / 2 - 1, bas - b - 5, taille * 0.9, BLEU, "c")
+      end
     end
   end
 
@@ -755,6 +770,22 @@ end
 -- Mises en page (1920 x 1080 ou 1080 x 1920)
 ------------------------------------------------------------------------
 
+-- Fondu entre deux villes : seules les valeurs s'effacent, les tuiles et les
+-- titres restent en place. Chaque zone est recouverte de la couleur de tuile.
+local function voiles(zones, a)
+  if a <= 0 then return end
+  for _, z in ipairs(zones) do
+    forme(z[1], z[2], z[3], z[4], 14, TUILE, a)
+  end
+end
+
+local function voiles_mesures(case, a)
+  for i = 0, 7 do
+    local x, y, w, h = case(i)
+    voiles({{x + 4, y + h * 0.20, w - 8, h * 0.78}}, a)
+  end
+end
+
 local function prevision_tuile(p, x, y, w, h, t)
   tuile(x, y, w, h)
   texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 50, 38, PALE, "c")
@@ -789,8 +820,9 @@ local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
 end
 
-local function paysage(d, age, t, ts, rang)
+local function paysage(d, age, t, ts, rang, voile)
   local nom = meteo.ville or "Sarrebourg"
+  local function case(i) return 40 + i * 231.14, 251, 222, 235 end
 
   tuile(40, 30, 860, 205)
   texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 420), OR, "g")
@@ -804,18 +836,28 @@ local function paysage(d, age, t, ts, rang)
   tuile(920, 30, 960, 205)
   temps_actuel(1050, 1215, 1520, 1550, 1566, 132, ts, t)
 
-  mesures(function(i) return 40 + i * 236, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
+  mesures(case, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 502, 1840, 215, 170, true, t)
+  courbe(40, 502, 1840, 215, 170, true)
 
-  for i, p in ipairs(meteo.previsions or {}) do
+  local previsions = meteo.previsions or {}
+  for i, p in ipairs(previsions) do
     prevision_tuile(p, 40 + (i - 1) * 371, 733, 356, 317, t)
+  end
+
+  voiles({{60, 38, 460, 52}, {930, 38, 940, 189}, {212, 512, 1660, 196}}, voile)
+  voiles_mesures(case, voile)
+  for i = 1, 5 do
+    voiles({{40 + (i - 1) * 371 + 8, 805, 340, 237}}, voile)
   end
 end
 
-local function portrait(d, age, t, ts, rang)
+local function portrait(d, age, t, ts, rang, voile)
   local nom = meteo.ville or "Sarrebourg"
   local date = JOURS[d.wday - 1] .. " " .. d.day .. " " .. MOIS[d.month] .. " " .. d.year
+  local function case(i)
+    return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
+  end
 
   tuile(40, 30, 1000, 320)
   texte(gras, nom, 540, 92, ajuste(gras, nom, 54, 920), OR, "c")
@@ -826,14 +868,18 @@ local function portrait(d, age, t, ts, rang)
   tuile(40, 366, 1000, 215)
   temps_actuel(150, 300, 630, 660, 678, 475, ts, t)
 
-  mesures(function(i)
-    return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
-  end, age, d.hour * 60 + d.min, t)
+  mesures(case, age, d.hour * 60 + d.min, t)
 
-  courbe(40, 1037, 1000, 225, 14, false, t)
+  courbe(40, 1037, 1000, 225, 14, false)
 
   for i, p in ipairs(meteo.previsions or {}) do
     prevision_ligne(p, 40, 1278 + (i - 1) * 124, 1000, 112, t)
+  end
+
+  voiles({{60, 40, 960, 64}, {50, 376, 980, 195}, {50, 1085, 980, 170}}, voile)
+  voiles_mesures(case, voile)
+  for i = 1, 5 do
+    voiles({{240, 1278 + (i - 1) * 124 + 6, 790, 100}}, voile)
   end
 end
 
@@ -876,13 +922,8 @@ function node.render()
   gl.scale(k, k, 1)
 
   if L < H then
-    portrait(d, age_lune(ts), t, ts, rang)
+    portrait(d, age_lune(ts), t, ts, rang, voile)
   else
-    paysage(d, age_lune(ts), t, ts, rang)
-  end
-
-  -- Fondu rapide entre deux villes
-  if voile > 0 then
-    forme(0, 0, base_l, base_h, 0, FOND, voile)
+    paysage(d, age_lune(ts), t, ts, rang, voile)
   end
 end

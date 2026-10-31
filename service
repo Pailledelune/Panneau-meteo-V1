@@ -122,6 +122,7 @@ def prevision(jours, i):
         "jour": (d.weekday() + 1) % 7,      # 0 = dimanche
         "quantieme": d.day,
         "anim": condition(jours["weather_code"][i], True)[0],
+        "libelle": condition(jours["weather_code"][i], True)[1],
         "max": jours["temperature_2m_max"][i],
         "min": jours["temperature_2m_min"][i],
         "pluie": jours["precipitation_probability_max"][i],
@@ -259,6 +260,7 @@ def interroger(ville):
         "libelle": libelle,
         "lever": heure(lever),
         "coucher": heure(coucher),
+        "lever_demain": heure(jours["sunrise"][aujourdhui + 1]),
         "duree_jour": duree,
         "ecart_jour": duree - veille,
         "pleine_lune": pleine_lune(time.time(), decalage),

@@ -182,14 +182,26 @@ local function signe(v)
 end
 
 -- Echelle de couleurs des temperatures
+local TEMP_ORANGE = {0.949, 0.604, 0.243}
+local TEMP_ROUGE  = {0.898, 0.325, 0.239}
+
 local function couleur_temp(v)
   local n = arrondi(v or 0)
   if n <= 0 then return BLANC end
   if n <= 11 then return BLEU end
   if n <= 20 then return JAUNE end
-  if n <= 30 then return {0.949, 0.604, 0.243} end
-  return {0.898, 0.325, 0.239}
+  if n <= 30 then return TEMP_ORANGE end
+  return TEMP_ROUGE
 end
+
+-- Etages du mercure, de "de" a "a" degres
+local ETAGES = {
+  {de = -100, a = 0.5,  c = BLANC},
+  {de = 0.5,  a = 11.5, c = BLEU},
+  {de = 11.5, a = 20.5, c = JAUNE},
+  {de = 20.5, a = 30.5, c = TEMP_ORANGE},
+  {de = 30.5, a = 100,  c = TEMP_ROUGE},
+}
 
 -- Le degre est dessine en anneau, sur le fond de la tuile
 local function anneau(x, y, r, c, fond)
@@ -383,14 +395,24 @@ end
 -- Animations des mesures
 ------------------------------------------------------------------------
 
+-- Le mercure monte en traversant les couleurs : boule blanche, puis chaque
+-- etage de l'echelle des temperatures jusqu'au rouge en haut du tube
 local function thermometre(v, t)
   forme(-13, -92, 26, 130, 13, CREUX)
   disque(0, 58, 32, CREUX)
-  local c = couleur_temp(v)
-  local f = math.max(0, math.min(1, ((v or 0) + 20) / 60))
-  local h = 16 + f * 104 + 2 * math.sin(t * 1.5)
-  forme(-7, 46 - h, 14, h + 14, 7, c)
-  disque(0, 58, 24, c)
+  local n = v or 0
+  local function hauteur(x)
+    return 16 + math.max(0, math.min(1, (x + 20) / 60)) * 104
+  end
+  local niveau = hauteur(n) + 2 * math.sin(t * 1.5)
+  for i = #ETAGES, 1, -1 do
+    local e = ETAGES[i]
+    if n > e.de then
+      local h = math.min(niveau, hauteur(e.a))
+      forme(-7, 46 - h, 14, h + 14, 7, e.c)
+    end
+  end
+  disque(0, 58, 24, BLANC)
 end
 
 local function goutte(v, t)
@@ -437,8 +459,9 @@ local function minutes(h)
   return a and tonumber(a) * 60 + tonumber(b)
 end
 
--- Soleil pose sur son arc entre le lever et le coucher
-local function course(lever, coucher, maintenant, t)
+-- Soleil pose sur son arc entre le lever et le coucher ; la nuit, une lune
+-- le parcourt du coucher au lever suivant, parmi des etoiles qui clignotent
+local function course(lever, coucher, demain, maintenant, t)
   for i = 0, 18 do
     local a = math.rad(-180 + i * 10)
     disque(math.cos(a) * 108, 62 + math.sin(a) * 108, 3, PALE)
@@ -449,6 +472,17 @@ local function course(lever, coucher, maintenant, t)
     if f >= 0 and f <= 1 then
       local a = math.rad(-180 + f * 180)
       soleil(math.cos(a) * 108, 62 + math.sin(a) * 108, 18, t)
+    else
+      local depuis = maintenant - coucher
+      if depuis < 0 then depuis = depuis + 1440 end
+      local a = math.rad(-180 + depuis / (1440 - coucher + (demain or lever)) * 180)
+      etoile(-62, 22, 5, t, 0)
+      etoile(-24, -22, 4, t, 2)
+      etoile(18, 28, 5, t, 4)
+      etoile(58, -8, 4, t, 1)
+      etoile(-92, 44, 3, t, 3)
+      etoile(90, 42, 3, t, 5)
+      croissant(math.cos(a) * 108, 62 + math.sin(a) * 108, 22)
     end
   end
 end
@@ -580,12 +614,16 @@ local function mesures(case, age, maintenant, t)
   end
 
   x, y, w, h = case(4)
-  tuile_mesure(x, y, w, h, "Soleil", course, minutes(m.lever), minutes(m.coucher), maintenant, t)
+  local couche = minutes(m.coucher)
+  tuile_mesure(x, y, w, h, "Soleil", course, minutes(m.lever), couche,
+    minutes(m.lever_demain), maintenant, t)
   local ts = h * 0.105
   texte(gras, m.lever or "--", x + 14, y + h * 0.77, ts, OR, "g")
   texte(gras, m.coucher or "--", x + w - 14, y + h * 0.77, ts, OR, "d")
   fleche(x + w / 2, y + h * 0.77 - ts * 0.33, m.ecart_jour, 1, 0.9)
-  if m.duree_jour then
+  if couche and maintenant >= couche and m.lever_demain then
+    detail(x, y, w, h, "Lever demain " .. m.lever_demain)
+  elseif m.duree_jour then
     detail(x, y, w, h, string.format("Jour %d h %02d, %s min",
       math.floor(m.duree_jour / 60), m.duree_jour % 60, signe(m.ecart_jour or 0)))
   end
@@ -770,39 +808,29 @@ end
 -- Mises en page (1920 x 1080 ou 1080 x 1920)
 ------------------------------------------------------------------------
 
--- Fondu entre deux villes : seules les valeurs s'effacent, les tuiles et les
--- titres restent en place. Chaque zone est recouverte de la couleur de tuile.
-local function voiles(zones, a)
-  if a <= 0 then return end
-  for _, z in ipairs(zones) do
-    forme(z[1], z[2], z[3], z[4], 14, TUILE, a)
-  end
-end
-
-local function voiles_mesures(case, a)
-  for i = 0, 7 do
-    local x, y, w, h = case(i)
-    voiles({{x + 4, y + h * 0.20, w - 8, h * 0.78}}, a)
-  end
-end
-
 local function prevision_tuile(p, x, y, w, h, t)
   tuile(x, y, w, h)
   texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 50, 38, PALE, "c")
-  animation(p.anim, x + w / 2 - 72, y + 160, 0.95, t)
-  temperature(gras, p.max, x + w - 36, y + 150, 64, BLANC, "d")
-  temperature(sans, p.min, x + w - 36, y + 208, 44, PALE, "d")
+  animation(p.anim, x + w / 2 - 72, y + 150, 0.88, t)
+  temperature(gras, p.max, x + w - 36, y + 140, 64, couleur_temp(p.max), "d")
+  temperature(sans, p.min, x + w - 36, y + 198, 44, couleur_temp(p.min), "d")
+  if p.libelle then
+    texte(sans, p.libelle, x + w / 2, y + 264, ajuste(sans, p.libelle, 30, w - 32), BLANC, "c")
+  end
   if p.pluie then
-    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 285, 30, BLEU, "c")
+    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 300, 26, BLEU, "c")
   end
 end
 
 local function prevision_ligne(p, x, y, w, h, t)
   tuile(x, y, w, h)
-  texte(gras, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + 36, y + 72, 42, BLANC, "g")
-  animation(p.anim, x + 320, y + h / 2, 0.48, t)
-  temperature(gras, p.max, x + 560, y + 74, 50, BLANC, "c")
-  temperature(sans, p.min, x + 690, y + 74, 44, PALE, "c")
+  texte(gras, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + 36, y + 50, 36, BLANC, "g")
+  if p.libelle then
+    texte(sans, p.libelle, x + 36, y + 92, ajuste(sans, p.libelle, 25, 270), PALE, "g")
+  end
+  animation(p.anim, x + 370, y + h / 2, 0.48, t)
+  temperature(gras, p.max, x + 560, y + 74, 50, couleur_temp(p.max), "c")
+  temperature(sans, p.min, x + 690, y + 74, 44, couleur_temp(p.min), "c")
   if p.pluie then
     texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w - 36, y + 72, 36, BLEU, "d")
   end
@@ -820,9 +848,8 @@ local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
   ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
 end
 
-local function paysage(d, age, t, ts, rang, voile)
+local function paysage(d, age, t, ts, rang)
   local nom = meteo.ville or "Sarrebourg"
-  local function case(i) return 40 + i * 231.14, 251, 222, 235 end
 
   tuile(40, 30, 860, 205)
   texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 420), OR, "g")
@@ -836,28 +863,18 @@ local function paysage(d, age, t, ts, rang, voile)
   tuile(920, 30, 960, 205)
   temps_actuel(1050, 1215, 1520, 1550, 1566, 132, ts, t)
 
-  mesures(case, age, d.hour * 60 + d.min, t)
+  mesures(function(i) return 40 + i * 231.14, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
 
   courbe(40, 502, 1840, 215, 170, true)
 
-  local previsions = meteo.previsions or {}
-  for i, p in ipairs(previsions) do
+  for i, p in ipairs(meteo.previsions or {}) do
     prevision_tuile(p, 40 + (i - 1) * 371, 733, 356, 317, t)
-  end
-
-  voiles({{60, 38, 460, 52}, {930, 38, 940, 189}, {212, 512, 1660, 196}}, voile)
-  voiles_mesures(case, voile)
-  for i = 1, 5 do
-    voiles({{40 + (i - 1) * 371 + 8, 805, 340, 237}}, voile)
   end
 end
 
-local function portrait(d, age, t, ts, rang, voile)
+local function portrait(d, age, t, ts, rang)
   local nom = meteo.ville or "Sarrebourg"
   local date = JOURS[d.wday - 1] .. " " .. d.day .. " " .. MOIS[d.month] .. " " .. d.year
-  local function case(i)
-    return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
-  end
 
   tuile(40, 30, 1000, 320)
   texte(gras, nom, 540, 92, ajuste(gras, nom, 54, 920), OR, "c")
@@ -868,18 +885,14 @@ local function portrait(d, age, t, ts, rang, voile)
   tuile(40, 366, 1000, 215)
   temps_actuel(150, 300, 630, 660, 678, 475, ts, t)
 
-  mesures(case, age, d.hour * 60 + d.min, t)
+  mesures(function(i)
+    return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
+  end, age, d.hour * 60 + d.min, t)
 
   courbe(40, 1037, 1000, 225, 14, false)
 
   for i, p in ipairs(meteo.previsions or {}) do
     prevision_ligne(p, 40, 1278 + (i - 1) * 124, 1000, 112, t)
-  end
-
-  voiles({{60, 40, 960, 64}, {50, 376, 980, 195}, {50, 1085, 980, 170}}, voile)
-  voiles_mesures(case, voile)
-  for i = 1, 5 do
-    voiles({{240, 1278 + (i - 1) * 124 + 6, 790, 100}}, voile)
   end
 end
 
@@ -887,13 +900,10 @@ function node.render()
   local t   = sys.now()
   local ts  = os.time()
 
-  -- Ville affichee, a tour de role
+  -- Ville affichee, a tour de role et sans transition
   local rang = 1
-  local voile = 0
   if #villes > 1 then
     rang = math.floor(t / duree_ville) % #villes + 1
-    local p = t % duree_ville
-    voile = math.max(0, 1 - p / 0.4, 1 - (duree_ville - p) / 0.4)
   end
   meteo = villes[rang] or {}
 
@@ -922,8 +932,8 @@ function node.render()
   gl.scale(k, k, 1)
 
   if L < H then
-    portrait(d, age_lune(ts), t, ts, rang, voile)
+    portrait(d, age_lune(ts), t, ts, rang)
   else
-    paysage(d, age_lune(ts), t, ts, rang, voile)
+    paysage(d, age_lune(ts), t, ts, rang)
   end
 end

@@ -1,26 +1,41 @@
 {
   "name": "Panneau météo",
   "permissions": {
-    "network": "Récupère la position de la ville et la météo sur open-meteo.com"
+    "network": "Récupère la position des villes, la météo et la qualité de l'air sur open-meteo.com"
   },
   "options": [
     {
-      "title": "Lieu",
+      "title": "Villes",
       "type": "section",
-      "intro": "La météo se met à jour toutes les 15 minutes depuis Open-Meteo."
+      "intro": "La météo se met à jour toutes les 15 minutes depuis Open-Meteo. Sans ville saisie, le panneau affiche Sarrebourg. Avec plusieurs villes, elles s'affichent à tour de rôle."
     },
     {
-      "title": "Ville",
-      "name": "ville",
-      "type": "string",
-      "default": "Sarrebourg"
+      "title": "Villes à afficher",
+      "name": "villes",
+      "type": "list",
+      "itemname": "Ville",
+      "items": [
+        {
+          "title": "Ville",
+          "name": "ville",
+          "type": "string",
+          "default": "",
+          "placeholder": "Sarrebourg"
+        },
+        {
+          "title": "Code du pays",
+          "name": "pays",
+          "type": "string",
+          "default": "FR",
+          "hint": "Deux lettres : FR, DE, BE, CH, LU. Laisser vide pour chercher dans tous les pays"
+        }
+      ]
     },
     {
-      "title": "Code du pays",
-      "name": "pays",
-      "type": "string",
-      "default": "FR",
-      "hint": "Deux lettres : FR, DE, BE, CH, LU. Laisser vide pour chercher dans tous les pays"
+      "title": "Durée d'affichage de chaque ville (secondes)",
+      "name": "duree",
+      "type": "integer",
+      "default": 20
     },
     {
       "title": "Affichage",

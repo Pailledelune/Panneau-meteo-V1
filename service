@@ -1,12 +1,13 @@
 #!/usr/bin/python2.7
 # -*- coding: utf-8 -*-
 #
-# Service meteo : retrouve la position de la ville choisie, interroge
+# Service meteo : retrouve la position des villes choisies, interroge
 # Open-Meteo toutes les 15 minutes et ecrit meteo.json, lu par node.lua.
 # Compatible Python 2.7 (info-beamer) et 3.
 
 import datetime
 import json
+import math
 import os
 import time
 import traceback
@@ -14,12 +15,15 @@ import traceback
 import requests
 
 URL_METEO = "https://api.open-meteo.com/v1/forecast"
+URL_AIR = "https://air-quality-api.open-meteo.com/v1/air-quality"
 URL_VILLE = "https://geocoding-api.open-meteo.com/v1/search"
 PERIODE = 15 * 60          # secondes entre deux mises a jour
 PERIODE_ERREUR = 2 * 60    # nouvel essai apres une erreur
 PAUSE = 20                 # frequence de lecture des reglages
 
 GEL = 0.0                  # degres : risque de verglas en dessous
+HEURES_COURBE = 24
+TENDANCE = 3               # ecart calcule sur 3 heures
 
 
 def lire_config():
@@ -30,10 +34,20 @@ def lire_config():
         return {}
 
 
+def choix_villes(config):
+    """Liste des (ville, pays) saisis, Sarrebourg si la liste est vide"""
+    choix = []
+    for v in config.get("villes") or []:
+        nom = (v.get("ville") or u"").strip()
+        if nom:
+            choix.append((nom, (v.get("pays") or u"").strip()))
+    return choix or [(u"Sarrebourg", u"FR")]
+
+
 def chercher_ville(nom, pays):
     params = {"name": nom, "count": 1, "language": "fr", "format": "json"}
     if pays:
-        params["countryCode"] = pays.strip().upper()
+        params["countryCode"] = pays.upper()
     r = requests.get(URL_VILLE, timeout=20, params=params)
     r.raise_for_status()
     resultats = r.json().get("results") or []
@@ -84,6 +98,24 @@ def heure(texte):
     return texte[11:16]            # "2026-10-31T07:36" -> "07:36"
 
 
+def minutes(texte):
+    return int(texte[11:13]) * 60 + int(texte[14:16])
+
+
+def heure_arrondie(texte):
+    return (minutes(texte) + 30) // 60
+
+
+def ecart(serie, i):
+    """Variation sur TENDANCE heures de la serie horaire, ou None"""
+    if serie is None or i < TENDANCE or i >= len(serie):
+        return None
+    a, b = serie[i - TENDANCE], serie[i]
+    if a is None or b is None:
+        return None
+    return round(b - a, 1)
+
+
 def prevision(jours, i):
     d = datetime.datetime.strptime(jours["time"][i], "%Y-%m-%d")
     return {
@@ -96,80 +128,185 @@ def prevision(jours, i):
     }
 
 
+def courbe(heures, i, jours, temperature):
+    """24 prochaines heures, a partir de la temperature actuelle. Chaque heure
+    est comparee au lever et au coucher arrondis de sa propre date, dans le
+    fuseau et l'heure legale de la ville."""
+    soleil = {}
+    for n, date in enumerate(jours["time"]):
+        soleil[date] = (heure_arrondie(jours["sunrise"][n]),
+                        heure_arrondie(jours["sunset"][n]))
+    points = []
+    for n in range(i, min(i + HEURES_COURBE, len(heures["time"]))):
+        moment = heures["time"][n]
+        h = int(moment[11:13])
+        lever, coucher = soleil.get(moment[:10], (7, 17))
+        points.append({
+            "h": h,
+            "t": heures["temperature_2m"][n],
+            "p": heures["precipitation_probability"][n] or 0,
+            "j": lever <= h < coucher,
+        })
+    if points:
+        points[0]["t"] = temperature
+    return points
+
+
+def pleine_lune(maintenant, decalage):
+    """Prochaine pleine lune (Meeus, principaux termes) : jour et mois locaux"""
+    jd = maintenant / 86400.0 + 2440587.5
+    k = math.floor((jd - 2451550.09766) / 29.530588861) - 0.5
+    while True:
+        k += 1
+        jde = 2451550.09766 + 29.530588861 * k
+        m = math.radians(2.5534 + 29.10535670 * k)
+        mp = math.radians(201.5643 + 385.81693528 * k)
+        f = math.radians(160.7108 + 390.67050284 * k)
+        jde += (-0.40614 * math.sin(mp) + 0.17302 * math.sin(m)
+                + 0.01614 * math.sin(2 * mp) + 0.01043 * math.sin(2 * f)
+                + 0.00734 * math.sin(mp - m) - 0.00515 * math.sin(mp + m)
+                + 0.00209 * math.sin(2 * m))
+        if jde > jd:
+            break
+    d = time.gmtime((jde - 2440587.5) * 86400 + decalage)
+    return {"jour": d.tm_mday, "mois": d.tm_mon}
+
+
+def qualite_air(ville):
+    """Indice europeen de qualite de l'air et son ecart, None si indisponible"""
+    try:
+        r = requests.get(URL_AIR, timeout=20, params={
+            "latitude": ville["latitude"],
+            "longitude": ville["longitude"],
+            "current": "european_aqi",
+            "hourly": "european_aqi",
+            "past_hours": TENDANCE,
+            "forecast_hours": 1,
+            "timezone": "auto",
+        })
+        r.raise_for_status()
+        donnees = r.json()
+        serie = donnees["hourly"]["european_aqi"]
+        i = donnees["hourly"]["time"].index(donnees["current"]["time"][:13] + ":00")
+        return donnees["current"]["european_aqi"], ecart(serie, i)
+    except Exception:
+        traceback.print_exc()
+        return None, None
+
+
 def interroger(ville):
     r = requests.get(URL_METEO, timeout=20, params={
         "latitude": ville["latitude"],
         "longitude": ville["longitude"],
         "current": "temperature_2m,apparent_temperature,relative_humidity_2m,"
                    "pressure_msl,wind_speed_10m,wind_direction_10m,"
-                   "weather_code,is_day",
-        "hourly": "precipitation",
+                   "wind_gusts_10m,weather_code,is_day",
+        "hourly": "temperature_2m,apparent_temperature,relative_humidity_2m,"
+                  "pressure_msl,wind_speed_10m,precipitation,"
+                  "precipitation_probability,uv_index",
         "past_hours": 6,
-        "forecast_hours": 1,
+        "forecast_hours": HEURES_COURBE + 2,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
                  "precipitation_probability_max,sunrise,sunset",
-        "forecast_days": 6,
+        "past_days": 1,
+        "forecast_days": 7,
         "timezone": "auto",
         "wind_speed_unit": "kmh",
     })
     r.raise_for_status()
     donnees = r.json()
     actuel = donnees["current"]
+    heures = donnees["hourly"]
     jours = donnees["daily"]
+    decalage = donnees.get("utc_offset_seconds") or 0
+
+    # Rang de l'heure en cours : daily commence hier, hourly 6 h plus tot
+    i = heures["time"].index(actuel["time"][:13] + ":00")
+    aujourdhui = jours["time"].index(actuel["time"][:10])
 
     anim, libelle = condition(actuel["weather_code"], actuel.get("is_day", 1) == 1)
-    pluies = donnees.get("hourly", {}).get("precipitation") or []
-    if anim != "verglas" and risque_verglas(actuel["temperature_2m"], pluies):
+    if anim != "verglas" and risque_verglas(actuel["temperature_2m"],
+                                            heures["precipitation"][:i + 1]):
         anim, libelle = "verglas", u"Risque de verglas"
+
+    lever, coucher = jours["sunrise"][aujourdhui], jours["sunset"][aujourdhui]
+    duree = minutes(coucher) - minutes(lever)
+    veille = minutes(jours["sunset"][aujourdhui - 1]) - minutes(jours["sunrise"][aujourdhui - 1])
+    air, ecart_air = qualite_air(ville)
 
     return {
         "ville": ville["name"],
-        "decalage": donnees.get("utc_offset_seconds"),
+        "decalage": decalage,
         "temperature": actuel["temperature_2m"],
         "ressenti": actuel["apparent_temperature"],
         "humidite": actuel["relative_humidity_2m"],
         "pression": actuel["pressure_msl"],
         "vent": actuel["wind_speed_10m"],
+        "rafales": actuel["wind_gusts_10m"],
         "direction": actuel["wind_direction_10m"],
+        "uv": heures["uv_index"][i],
+        "air": air,
+        "ecarts": {
+            "temperature": ecart(heures["temperature_2m"], i),
+            "ressenti": ecart(heures["apparent_temperature"], i),
+            "humidite": ecart(heures["relative_humidity_2m"], i),
+            "pression": ecart(heures["pressure_msl"], i),
+            "vent": ecart(heures["wind_speed_10m"], i),
+            "uv": ecart(heures["uv_index"], i),
+            "air": ecart_air,
+        },
         "anim": anim,
         "libelle": libelle,
-        "lever": heure(jours["sunrise"][0]),
-        "coucher": heure(jours["sunset"][0]),
-        "previsions": [prevision(jours, i) for i in range(1, 6)],
+        "lever": heure(lever),
+        "coucher": heure(coucher),
+        "duree_jour": duree,
+        "ecart_jour": duree - veille,
+        "pleine_lune": pleine_lune(time.time(), decalage),
+        "courbe": courbe(heures, i, jours, actuel["temperature_2m"]),
+        "previsions": [prevision(jours, n) for n in range(aujourdhui + 1, aujourdhui + 6)],
         "maj": int(time.time()),
     }
 
 
-def ecrire(meteo):
+def ecrire(villes):
     # Ecriture dans un fichier temporaire puis renommage : node.lua ne lit
     # jamais un fichier a moitie ecrit
     with open("meteo.json.tmp", "w") as f:
-        json.dump(meteo, f)
+        json.dump({"villes": villes}, f)
     os.rename("meteo.json.tmp", "meteo.json")
 
 
+def mettre_a_jour(choix, positions, resultats):
+    """Interroge chaque ville ; garde l'ancien resultat si l'une echoue.
+    Renvoie True si tout a reussi."""
+    reussi = True
+    for c in choix:
+        try:
+            if c not in positions:
+                positions[c] = chercher_ville(c[0], c[1])
+            if positions[c] is None:
+                resultats[c] = {"ville": c[0], "erreur": u"Ville introuvable"}
+            else:
+                resultats[c] = interroger(positions[c])
+                print("meteo: %s" % resultats[c]["ville"].encode("ascii", "replace"))
+        except Exception:
+            traceback.print_exc()
+            reussi = False
+    return reussi
+
+
 def main():
-    choix_vu = None        # (ville, pays) deja recherches
-    position = None
+    choix_vu = None
+    positions = {}
+    resultats = {}
     prochaine = 0
     while True:
-        config = lire_config()
-        choix = (config.get("ville") or u"Sarrebourg", config.get("pays", u"FR"))
+        choix = choix_villes(lire_config())
         if choix != choix_vu or time.time() >= prochaine:
-            try:
-                if choix != choix_vu:
-                    position = chercher_ville(*choix)
-                    choix_vu = choix
-                if position is None:
-                    ecrire({"ville": choix[0], "erreur": u"Ville introuvable"})
-                else:
-                    meteo = interroger(position)
-                    ecrire(meteo)
-                    print("meteo: %s" % json.dumps(meteo))
-                prochaine = time.time() + PERIODE
-            except Exception:
-                traceback.print_exc()
-                prochaine = time.time() + PERIODE_ERREUR
+            reussi = mettre_a_jour(choix, positions, resultats)
+            ecrire([resultats[c] for c in choix if c in resultats])
+            choix_vu = choix
+            prochaine = time.time() + (PERIODE if reussi else PERIODE_ERREUR)
         time.sleep(PAUSE)
 
 

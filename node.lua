@@ -1,13 +1,10 @@
 gl.setup(NATIVE_WIDTH, NATIVE_HEIGHT)
 
--- Polices DejaVu (licence libre, voir LICENCE-polices.txt)
-local sans = resource.load_font "sans.ttf"
-local gras = resource.load_font "sans-gras.ttf"
+-- Polices Poppins (licence libre, voir OFL-poppins.txt)
+local sans = resource.load_font "poppins.ttf"
+local gras = resource.load_font "poppins-gras.ttf"
 
--- Couleurs
-local FOND   = {0.055, 0.165, 0.278}
-local TUILE  = {0.090, 0.224, 0.369}
-local CREUX  = {0.039, 0.122, 0.212}
+-- Couleurs fixes
 local BLANC  = {1.000, 1.000, 1.000}
 local PALE   = {0.663, 0.757, 0.855}
 local NUAGE  = {0.843, 0.886, 0.933}
@@ -16,22 +13,52 @@ local ORAGE  = {0.478, 0.553, 0.639}
 local OR     = {0.961, 0.722, 0.239}
 local BLEU   = {0.435, 0.706, 0.941}
 local GLACE  = {0.749, 0.902, 1.000}
-local CHAUD  = {0.941, 0.478, 0.322}
+local VERT   = {0.482, 0.776, 0.494}
+local JAUNE  = {0.949, 0.831, 0.361}
+local ORANGE = {0.949, 0.651, 0.353}
+local ROUGE  = {0.910, 0.412, 0.353}
+local VIOLET = {0.714, 0.427, 0.827}
+
+-- Teintes de jour et de nuit
+local JOUR = {
+  fond  = {0.055, 0.165, 0.278},
+  tuile = {0.090, 0.224, 0.369},
+  creux = {0.039, 0.122, 0.212},
+}
+local NUIT = {
+  fond  = {0.027, 0.090, 0.165},
+  tuile = {0.055, 0.153, 0.251},
+  creux = {0.020, 0.059, 0.110},
+}
+
+-- Teintes du moment, recalculees a chaque image
+local FOND, TUILE, CREUX = {0, 0, 0}, {0, 0, 0}, {0, 0, 0}
 
 local blanc = resource.create_colored_texture(1, 1, 1, 1)
 
+-- Colonnes de la courbe : alternance une heure sur deux, jour ou nuit
+local function texture_hex(r, g, b)
+  return resource.create_colored_texture(r / 255, g / 255, b / 255, 1)
+end
+local COLONNES = {
+  [true]  = {[0] = texture_hex(0x33, 0x63, 0x90), texture_hex(0x3B, 0x6E, 0x9E)},
+  [false] = {[0] = texture_hex(0x0F, 0x2B, 0x48), texture_hex(0x0B, 0x23, 0x3D)},
+}
+local BASES = {[true] = texture_hex(0x27, 0x51, 0x7A), [false] = texture_hex(0x0A, 0x1F, 0x36)}
+
 -- Reglages (tableau de bord info-beamer) et meteo (service)
 local orientation = "paysage"
-local ville = "Sarrebourg"
+local duree_ville = 20
+local villes = {}
 local meteo = {}
 
 util.json_watch("config.json", function(config)
   orientation = config.orientation or orientation
-  ville = config.ville or ville
+  duree_ville = math.max(5, config.duree or duree_ville)
 end)
 
 util.json_watch("meteo.json", function(m)
-  meteo = m
+  villes = m.villes or {}
 end)
 
 ------------------------------------------------------------------------
@@ -61,7 +88,7 @@ local shader_lune = resource.create_shader[[
   #endif
   uniform sampler2D Texture;
   varying vec2 TexCoord;
-  uniform float phase, px;
+  uniform float phase, px, r0, g0, b0;
   void main() {
     vec2 p = (TexCoord - vec2(0.5)) * 2.0;
     float d = length(p);
@@ -74,26 +101,27 @@ local shader_lune = resource.create_shader[[
     c -= 0.14 * smoothstep(0.20, 0.14, length(p - vec2(0.30, -0.30)));
     c -= 0.12 * smoothstep(0.15, 0.10, length(p - vec2(0.15, 0.48)));
     c -= 0.12 * smoothstep(0.14, 0.09, length(p - vec2(-0.42, -0.38)));
-    gl_FragColor = texture2D(Texture, TexCoord) * vec4(mix(vec3(0.039, 0.122, 0.212), c, e), a);
+    gl_FragColor = texture2D(Texture, TexCoord) * vec4(mix(vec3(r0, g0, b0), c, e), a);
   }
 ]]
 
--- Goutte remplie jusqu'au niveau voulu, avec une petite vague
+-- Goutte a pointe fine et bas rond, remplie jusqu'au niveau voulu
 local shader_goutte = resource.create_shader[[
   #ifdef GL_ES
   precision mediump float;
   #endif
   uniform sampler2D Texture;
   varying vec2 TexCoord;
-  uniform float niveau, temps, px;
+  uniform float niveau, temps, px, r0, g0, b0;
   void main() {
     vec2 p = (TexCoord - vec2(0.5)) * vec2(2.0, -2.0);
-    float u = clamp((0.95 - p.y) / 1.9, 0.0, 1.0);
-    float l = 1.12 * pow(u, 0.75) * sqrt(1.0 - u);
+    float l;
+    if (p.y < -0.05) l = sqrt(max(0.4096 - (p.y + 0.28) * (p.y + 0.28), 0.0));
+    else l = 0.597 * pow(max((0.98 - p.y) / 1.03, 0.0), 1.4);
     float a = clamp((l - abs(p.x)) / px + 0.5, 0.0, 1.0);
-    float s = -0.95 + 1.9 * niveau + 0.03 * sin(p.x * 7.0 + temps * 2.0);
+    float s = -0.92 + 1.9 * niveau + 0.03 * sin(p.x * 7.0 + temps * 2.0);
     float e = clamp((s - p.y) / px + 0.5, 0.0, 1.0);
-    vec3 c = mix(vec3(0.039, 0.122, 0.212), vec3(0.435, 0.706, 0.941), e);
+    vec3 c = mix(vec3(r0, g0, b0), vec3(0.435, 0.706, 0.941), e);
     gl_FragColor = texture2D(Texture, TexCoord) * vec4(c, a);
   }
 ]]
@@ -122,14 +150,14 @@ local function trait(x1, y1, x2, y2, ep, c, a)
 end
 
 local function tuile(x, y, w, h)
-  forme(x, y, w, h, 22, TUILE)
+  forme(x, y, w, h, 20, TUILE)
 end
 
--- Texte centre verticalement sur y ; ancre "g", "c" ou "d"
+-- Texte pose sur sa ligne de base y ; ancre "g", "c" ou "d"
 local function texte(f, t, x, y, taille, c, ancre)
   local w = f:width(t, taille)
   if ancre == "c" then x = x - w / 2 elseif ancre == "d" then x = x - w end
-  f:write(x, y - taille / 2, t, taille, c[1], c[2], c[3], 1)
+  f:write(x, y - taille * 0.85, t, taille, c[1], c[2], c[3], 1)
 end
 
 -- Reduit la taille pour que le texte tienne dans la largeur
@@ -139,21 +167,71 @@ local function ajuste(f, t, taille, largeur)
   return taille
 end
 
-local function entier(v)
-  return string.format("%d", math.floor(v + 0.5))
+local function arrondi(v)
+  return math.floor(v + 0.5)
 end
 
--- Temperature : le degre est dessine en anneau (fond = tuile)
-local function temperature(f, v, x, y, taille, c, ancre)
+local function entier(v)
+  return string.format("%d", arrondi(v))
+end
+
+local function signe(v)
+  local n = arrondi(v)
+  if n > 0 then return "+" .. n end
+  return tostring(n)
+end
+
+-- Echelle de couleurs des temperatures
+local function couleur_temp(v)
+  local n = arrondi(v or 0)
+  if n <= 0 then return BLANC end
+  if n <= 11 then return BLEU end
+  if n <= 20 then return JAUNE end
+  if n <= 30 then return {0.949, 0.604, 0.243} end
+  return {0.898, 0.325, 0.239}
+end
+
+-- Le degre est dessine en anneau, sur le fond de la tuile
+local function anneau(x, y, r, c, fond)
+  disque(x, y, r, c)
+  disque(x, y, r * 0.5, fond or TUILE)
+end
+
+local function temperature(f, v, x, y, taille, c, ancre, fond)
   local t = v and entier(v) or "--"
   local w = f:width(t, taille)
   local e = taille * 0.30
   if ancre == "c" then x = x - (w + e) / 2 elseif ancre == "d" then x = x - w - e end
-  f:write(x, y - taille / 2, t, taille, c[1], c[2], c[3], 1)
-  local r = taille * 0.095
-  local cx, cy = x + w + e * 0.55, y - taille * 0.27
-  disque(cx, cy, r, c)
-  disque(cx, cy, r * 0.5, TUILE)
+  f:write(x, y - taille * 0.85, t, taille, c[1], c[2], c[3], 1)
+  anneau(x + w + e * 0.55, y - taille * 0.62, taille * 0.095, c, fond)
+end
+
+-- "-1 degre en 3 h", le degre etant dessine
+local function ecart_degres(f, v, x, y, taille, c, ancre)
+  if not v then return end
+  local a, b = signe(v), " en 3 h"
+  local wa, wb = f:width(a, taille), f:width(b, taille)
+  local e = taille * 0.36
+  if ancre == "c" then x = x - (wa + e + wb) / 2 end
+  f:write(x, y - taille * 0.85, a, taille, c[1], c[2], c[3], 1)
+  anneau(x + wa + e * 0.5, y - taille * 0.62, taille * 0.13, c)
+  f:write(x + wa + e, y - taille * 0.85, b, taille, c[1], c[2], c[3], 1)
+end
+
+-- Fleche de tendance : monte (or), baisse (bleu) ou stable (pale)
+local function fleche(x, y, v, seuil, s)
+  if not v then return end
+  local angle, c = 0, PALE
+  if v >= seuil then angle, c = -45, OR
+  elseif v <= -seuil then angle, c = 45, BLEU end
+  gl.pushMatrix()
+  gl.translate(x, y)
+  gl.rotate(angle, 0, 0, 1)
+  gl.scale(s, s, 1)
+  trait(-9, 0, 9, 0, 3, c)
+  trait(3, -6, 9, 0, 3, c)
+  trait(3, 6, 9, 0, 3, c)
+  gl.popMatrix()
 end
 
 ------------------------------------------------------------------------
@@ -289,13 +367,16 @@ function ANIM.orage(t)
   trait(16, 34, -8, 84, 12, c)
 end
 
-local function animation(nom, x, y, s, t)
+local function place(x, y, s, dessin, ...)
   gl.pushMatrix()
   gl.translate(x, y)
   gl.scale(s, s, 1)
-  local a = ANIM[nom] or ANIM.nuageux
-  a(t)
+  dessin(...)
   gl.popMatrix()
+end
+
+local function animation(nom, x, y, s, t)
+  place(x, y, s, ANIM[nom] or ANIM.nuageux, t)
 end
 
 ------------------------------------------------------------------------
@@ -305,7 +386,7 @@ end
 local function thermometre(v, t)
   forme(-13, -92, 26, 130, 13, CREUX)
   disque(0, 58, 32, CREUX)
-  local c = (v or 0) >= 18 and CHAUD or ((v or 0) <= 3 and BLEU or OR)
+  local c = couleur_temp(v)
   local f = math.max(0, math.min(1, ((v or 0) + 20) / 60))
   local h = 16 + f * 104 + 2 * math.sin(t * 1.5)
   forme(-7, 46 - h, 14, h + 14, 7, c)
@@ -313,9 +394,14 @@ local function thermometre(v, t)
 end
 
 local function goutte(v, t)
-  shader_goutte:use{niveau = (v or 0) / 100, temps = t, px = 0.012}
-  blanc:draw(-95, -95, 95, 95)
+  shader_goutte:use{
+    niveau = (v or 0) / 100, temps = t, px = 0.012,
+    r0 = CREUX[1], g0 = CREUX[2], b0 = CREUX[3],
+  }
+  blanc:draw(-100, -100, 100, 100)
   shader_goutte:deactivate()
+  trait(-38, 34, -33, 52, 7, BLANC, 0.55)
+  trait(-33, 52, -16, 68, 7, BLANC, 0.55)
 end
 
 local function barometre(v, t)
@@ -367,24 +453,58 @@ local function course(lever, coucher, maintenant, t)
   end
 end
 
-local function lune_phase(age, r)
-  shader_lune:use{phase = age / 29.530588, px = 1.5 / r}
-  blanc:draw(-r, -r, r, r)
+local function lune_phase(age)
+  shader_lune:use{
+    phase = age / 29.530588, px = 0.017,
+    r0 = CREUX[1], g0 = CREUX[2], b0 = CREUX[3],
+  }
+  blanc:draw(-88, -88, 88, 88)
   shader_lune:deactivate()
 end
 
-local function tuile_mesure(x, y, w, h, titre, dessin, valeur, t)
-  tuile(x, y, w, h)
-  texte(sans, titre, x + w / 2, y + h * 0.13, h * 0.10, PALE, "c")
-  gl.pushMatrix()
-  gl.translate(x + w / 2, y + h * 0.48)
-  local s = h / 480
-  gl.scale(s, s, 1)
-  dessin(t)
-  gl.popMatrix()
-  if valeur then
-    texte(gras, valeur, x + w / 2, y + h * 0.85, ajuste(gras, valeur, h * 0.15, w - 30), BLANC, "c")
+local function couleur_uv(n)
+  if n <= 2 then return VERT end
+  if n <= 5 then return JAUNE end
+  if n <= 7 then return ORANGE end
+  if n <= 10 then return ROUGE end
+  return VIOLET
+end
+
+local function nom_uv(n)
+  if n <= 2 then return "Faible" end
+  if n <= 5 then return "Modéré" end
+  if n <= 7 then return "Élevé" end
+  if n <= 10 then return "Très élevé" end
+  return "Extrême"
+end
+
+local function barres_uv(v)
+  local n = arrondi(v or 0)
+  for i = 0, 9 do
+    local h = 16 + i * 7
+    forme(-110 + i * 22.4, 30 - h, 17, h, 3, (i < n) and couleur_uv(n) or CREUX)
   end
+end
+
+-- Indice europeen de qualite de l'air
+local function air_info(v)
+  if v <= 20 then return "Très bon", VERT end
+  if v <= 40 then return "Bon", VERT end
+  if v <= 60 then return "Moyen", JAUNE end
+  if v <= 80 then return "Médiocre", ORANGE end
+  if v <= 100 then return "Mauvais", ROUGE end
+  return "Très mauvais", VIOLET
+end
+
+local function jauge_air(v)
+  local _, c = air_info(v or 0)
+  local f = math.min(1, (v or 0) / 100)
+  for i = 0, 35 do
+    local a = math.rad(-90 + i * 10)
+    trait(math.cos(a) * 66, math.sin(a) * 66, math.cos(a) * 82, math.sin(a) * 82, 7,
+          (v and i / 36 < f) and c or CREUX)
+  end
+  if v then texte(gras, entier(v), 0, 15, 42, BLANC, "c") end
 end
 
 local BOUSSOLE = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"}
@@ -395,50 +515,167 @@ end
 
 local function nom_phase(a)
   if a < 1.0 or a >= 28.5 then return "Nouvelle lune" end
-  if a < 6.4 then return "Premier croissant" end
-  if a < 8.4 then return "Premier quartier" end
-  if a < 13.8 then return "Gibbeuse croissante" end
+  if a < 6.4 then return "1er croissant" end
+  if a < 8.4 then return "1er quartier" end
+  if a < 13.8 then return "Gibbeuse crois." end
   if a < 15.8 then return "Pleine lune" end
-  if a < 21.1 then return "Gibbeuse décroissante" end
+  if a < 21.1 then return "Gibbeuse déc." end
   if a < 23.1 then return "Dernier quartier" end
   return "Dernier croissant"
 end
 
--- Les six mesures, chacune dans la tuile indiquee
-local function mesures(place, age, heure_locale, t)
+local MOIS_COURTS = {"janv.", "févr.", "mars", "avril", "mai", "juin", "juil.",
+                     "août", "sept.", "oct.", "nov.", "déc."}
+
+-- Cadre commun d'une mesure : titre et animation
+local function tuile_mesure(x, y, w, h, titre, dessin, ...)
+  tuile(x, y, w, h)
+  texte(sans, titre, x + w / 2, y + h * 0.15, ajuste(sans, titre, h * 0.095, w - 20), PALE, "c")
+  place(x + w / 2, y + h * 0.42, h / 560, dessin, ...)
+end
+
+-- Valeur centree avec sa fleche, ligne d'information en dessous
+local function valeur(x, y, w, h, t, ecart, seuil)
+  local f = h * 0.135
+  f = ajuste(gras, t, f, w - (ecart and 66 or 24))
+  local vy = y + h * 0.77
+  local l = gras:width(t, f)
+  local depart = x + w / 2 - (l + (ecart and 34 or 0)) / 2
+  texte(gras, t, depart, vy, f, BLANC, "g")
+  fleche(depart + l + 20, vy - f * 0.33, ecart, seuil, 1.15)
+end
+
+local function detail(x, y, w, h, t)
+  texte(sans, t, x + w / 2, y + h * 0.92, ajuste(sans, t, h * 0.075, w - 16), PALE, "c")
+end
+
+-- Les huit mesures, chacune dans la tuile indiquee par "case"
+local function mesures(case, age, maintenant, t)
   local m = meteo
-  local x, y, w, h = place(0)
-  tuile_mesure(x, y, w, h, "Ressenti", function(q) thermometre(m.ressenti, q) end, nil, t)
-  temperature(gras, m.ressenti, x + w / 2, y + h * 0.85, h * 0.15, BLANC, "c")
+  local e = m.ecarts or {}
 
-  x, y, w, h = place(1)
-  tuile_mesure(x, y, w, h, "Hygrométrie", function(q) goutte(m.humidite, q) end,
-    m.humidite and (entier(m.humidite) .. " %") or "--", t)
+  local x, y, w, h = case(0)
+  tuile_mesure(x, y, w, h, "Ressenti", thermometre, m.ressenti, t)
+  local f = h * 0.135
+  local vy = y + h * 0.77
+  temperature(gras, m.ressenti, x + w / 2 - 14, vy, f, BLANC, "c")
+  fleche(x + w / 2 + f * 0.75, vy - f * 0.33, e.ressenti, 0.5, 1.15)
+  ecart_degres(sans, e.ressenti, x + w / 2, y + h * 0.92, h * 0.075, PALE, "c")
 
-  x, y, w, h = place(2)
-  tuile_mesure(x, y, w, h, "Pression", function(q) barometre(m.pression, q) end,
-    m.pression and (entier(m.pression) .. " hPa") or "--", t)
+  x, y, w, h = case(1)
+  tuile_mesure(x, y, w, h, "Hygrométrie", goutte, m.humidite, t)
+  valeur(x, y, w, h, m.humidite and (entier(m.humidite) .. " %") or "--", e.humidite, 2)
+  if e.humidite then detail(x, y, w, h, signe(e.humidite) .. " % en 3 h") end
 
-  x, y, w, h = place(3)
-  tuile_mesure(x, y, w, h, "Vent", function(q) eolienne(m.vent, q) end,
-    m.vent and (entier(m.vent) .. " km/h " .. nom_direction(m.direction)) or "--", t)
+  x, y, w, h = case(2)
+  tuile_mesure(x, y, w, h, "Pression", barometre, m.pression, t)
+  valeur(x, y, w, h, m.pression and (entier(m.pression) .. " hPa") or "--", e.pression, 1)
+  if e.pression then detail(x, y, w, h, signe(e.pression) .. " hPa en 3 h") end
 
-  x, y, w, h = place(4)
-  tuile_mesure(x, y, w, h, "Soleil", function(q)
-    course(minutes(m.lever), minutes(m.coucher), heure_locale, q)
-  end, nil, t)
-  local ts = h * 0.13
-  texte(gras, m.lever or "--", x + 18, y + h * 0.85, ts, OR, "g")
-  texte(gras, m.coucher or "--", x + w - 18, y + h * 0.85, ts, OR, "d")
+  x, y, w, h = case(3)
+  tuile_mesure(x, y, w, h, "Vent", eolienne, m.vent, t)
+  valeur(x, y, w, h, m.vent and (entier(m.vent) .. " km/h") or "--", e.vent, 3)
+  if m.vent then
+    detail(x, y, w, h, nom_direction(m.direction) .. ", rafales " .. entier(m.rafales or m.vent))
+  end
 
-  x, y, w, h = place(5)
-  tuile_mesure(x, y, w, h, "Lune", function() lune_phase(age, 88) end, nil, t)
+  x, y, w, h = case(4)
+  tuile_mesure(x, y, w, h, "Soleil", course, minutes(m.lever), minutes(m.coucher), maintenant, t)
+  local ts = h * 0.105
+  texte(gras, m.lever or "--", x + 14, y + h * 0.77, ts, OR, "g")
+  texte(gras, m.coucher or "--", x + w - 14, y + h * 0.77, ts, OR, "d")
+  fleche(x + w / 2, y + h * 0.77 - ts * 0.33, m.ecart_jour, 1, 0.9)
+  if m.duree_jour then
+    detail(x, y, w, h, string.format("Jour %d h %02d, %s min",
+      math.floor(m.duree_jour / 60), m.duree_jour % 60, signe(m.ecart_jour or 0)))
+  end
+
+  x, y, w, h = case(5)
+  tuile_mesure(x, y, w, h, "Lune", lune_phase, age)
   local n = nom_phase(age)
-  texte(sans, n, x + w / 2, y + h * 0.85, ajuste(sans, n, h * 0.10, w - 24), PALE, "c")
+  texte(gras, n, x + w / 2, y + h * 0.77, ajuste(gras, n, h * 0.085, w - 20), BLANC, "c")
+  if m.pleine_lune then
+    detail(x, y, w, h, "Pleine lune " .. m.pleine_lune.jour .. " " .. MOIS_COURTS[m.pleine_lune.mois])
+  end
+
+  x, y, w, h = case(6)
+  tuile_mesure(x, y, w, h, "Indice UV", barres_uv, m.uv)
+  valeur(x, y, w, h, m.uv and entier(m.uv) or "--", e.uv, 1)
+  if m.uv then detail(x, y, w, h, nom_uv(arrondi(m.uv))) end
+
+  x, y, w, h = case(7)
+  tuile_mesure(x, y, w, h, "Qualité de l'air", jauge_air, m.air)
+  valeur(x, y, w, h, m.air and (air_info(m.air)) or "--", e.air, 5)
+  if m.air then detail(x, y, w, h, "IQA " .. entier(m.air)) end
 end
 
 ------------------------------------------------------------------------
--- Heure et lune
+-- Courbe des prochaines 24 heures
+------------------------------------------------------------------------
+
+local function courbe(ox, oy, w, h, gauche, colonne, t)
+  tuile(ox, oy, w, h)
+  if colonne then
+    texte(sans, "Prochaines", ox + 24, oy + 58, 24, PALE, "g")
+    texte(sans, "24 heures", ox + 24, oy + 90, 24, PALE, "g")
+    animation("pluie", ox + 62, oy + 150, 0.42, t)
+    texte(sans, "Pluie", ox + 100, oy + 160, 24, BLEU, "g")
+  else
+    texte(sans, "Prochaines 24 heures", ox + 24, oy + 36, 26, PALE, "g")
+    animation("pluie", ox + w - 120, oy + 27, 0.24, t)
+    texte(sans, "Pluie", ox + w - 24, oy + 36, 24, BLEU, "d")
+  end
+
+  local points = meteo.courbe
+  if not points or #points < 2 then return end
+
+  local haut = oy + (colonne and 12 or 50)
+  local bas = oy + h - 42
+  local bw = (w - gauche - 12) / #points
+  local mini, maxi = 1000, -1000
+  for _, p in ipairs(points) do
+    mini = math.min(mini, p.t)
+    maxi = math.max(maxi, p.t)
+  end
+  if maxi - mini < 4 then
+    local m = (maxi + mini) / 2
+    mini, maxi = m - 2, m + 2
+  end
+
+  local function px(i) return ox + gauche + (i - 0.5) * bw end
+  local function py(v) return haut + 36 + (maxi - v) / (maxi - mini) * (bas - haut - 80) end
+
+  -- Colonnes, heure a la base, barre de pluie
+  local taille = math.min(20, bw * 0.52)
+  for i, p in ipairs(points) do
+    local x = ox + gauche + (i - 1) * bw
+    COLONNES[p.j][p.h % 2]:draw(x, haut, x + bw - 2, bas)
+    BASES[p.j]:draw(x, bas, x + bw - 2, bas + 30)
+    texte(p.j and gras or sans, string.format("%02d", p.h), x + bw / 2 - 1, bas + 22, taille,
+          p.j and BLANC or PALE, "c")
+    if p.p > 0 then
+      local b = p.p * 0.6
+      forme(x + bw * 0.2, bas - b, bw * 0.6 - 2, b, 3, BLEU, 0.8)
+    end
+  end
+
+  -- Ligne, points colores, valeur toutes les 3 heures
+  for i = 2, #points do
+    trait(px(i - 1), py(points[i - 1].t), px(i), py(points[i].t), 4, OR)
+  end
+  for i, p in ipairs(points) do
+    local c = couleur_temp(p.t)
+    if (i - 1) % 3 == 0 then
+      disque(px(i), py(p.t), 6, c)
+      temperature(gras, p.t, px(i), py(p.t) - 13, 22, c, "c", p.j and {0.22, 0.42, 0.60} or {0.05, 0.15, 0.25})
+    else
+      disque(px(i), py(p.t), 3.5, c)
+    end
+  end
+end
+
+------------------------------------------------------------------------
+-- Heure, lune et teinte
 ------------------------------------------------------------------------
 
 local JOURS = {[0] = "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"}
@@ -466,6 +703,19 @@ local function age_lune(t)
   return ((t - 947182440) / 86400) % 29.530588
 end
 
+-- Passe en douceur (45 minutes) de la teinte de jour a celle de nuit
+local function teinte(maintenant)
+  local lever, coucher = minutes(meteo.lever) or 420, minutes(meteo.coucher) or 1140
+  local f = math.max(0, math.min(1, (maintenant - lever) / 45 + 0.5))
+  local g = math.max(0, math.min(1, (coucher - maintenant) / 45 + 0.5))
+  local j = math.min(f, g)
+  for i = 1, 3 do
+    FOND[i]  = NUIT.fond[i]  + (JOUR.fond[i]  - NUIT.fond[i])  * j
+    TUILE[i] = NUIT.tuile[i] + (JOUR.tuile[i] - NUIT.tuile[i]) * j
+    CREUX[i] = NUIT.creux[i] + (JOUR.creux[i] - NUIT.creux[i]) * j
+  end
+end
+
 -- Libelle de la meteo actuelle, ou raison de son absence
 local function libelle_meteo(t)
   if meteo.erreur then return meteo.erreur end
@@ -474,20 +724,31 @@ local function libelle_meteo(t)
   return meteo.libelle or ""
 end
 
--- Coupe un libelle en deux lignes si besoin
-local function libelle(t, x, y, taille, largeur, ancre)
+-- Coupe un libelle en deux lignes si besoin ; y = milieu du bloc
+local function libelle(t, x, y, taille, largeur)
   if sans:width(t, taille) <= largeur then
-    texte(sans, t, x, y, taille, PALE, ancre)
+    texte(sans, t, x, y + taille * 0.35, taille, PALE, "g")
     return
   end
   local a, b = t:match("^(%S+)%s+(.+)$")
   if not a then
-    texte(sans, t, x, y, ajuste(sans, t, taille, largeur), PALE, ancre)
+    local s = ajuste(sans, t, taille, largeur)
+    texte(sans, t, x, y + s * 0.35, s, PALE, "g")
     return
   end
   local s = math.min(ajuste(sans, a, taille, largeur), ajuste(sans, b, taille, largeur))
-  texte(sans, a, x, y - s * 0.62, s, PALE, ancre)
-  texte(sans, b, x, y + s * 0.62, s, PALE, ancre)
+  texte(sans, a, x, y - s * 0.20, s, PALE, "g")
+  texte(sans, b, x, y + s * 1.05, s, PALE, "g")
+end
+
+-- Points indiquant la ville affichee ; x = premier point ou milieu
+local function points_villes(x, y, rang, centre)
+  local n = #villes
+  if n < 2 then return end
+  if centre then x = x - (n - 1) * 10 end
+  for i = 1, n do
+    disque(x + (i - 1) * 20, y, 6, (i == rang) and OR or PALE)
+  end
 end
 
 ------------------------------------------------------------------------
@@ -496,74 +757,104 @@ end
 
 local function prevision_tuile(p, x, y, w, h, t)
   tuile(x, y, w, h)
-  texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 56, 44, PALE, "c")
-  animation(p.anim, x + w / 2, y + 160, 0.68, t)
-  temperature(gras, p.max, x + w / 2 - 14, y + 298, 64, BLANC, "d")
-  temperature(sans, p.min, x + w / 2 + 16, y + 298, 48, PALE, "g")
+  texte(sans, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + w / 2, y + 50, 38, PALE, "c")
+  animation(p.anim, x + w / 2 - 72, y + 160, 0.95, t)
+  temperature(gras, p.max, x + w - 36, y + 150, 64, BLANC, "d")
+  temperature(sans, p.min, x + w - 36, y + 208, 44, PALE, "d")
   if p.pluie then
-    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 348, 32, BLEU, "c")
+    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w / 2, y + 285, 30, BLEU, "c")
   end
 end
 
 local function prevision_ligne(p, x, y, w, h, t)
   tuile(x, y, w, h)
-  texte(gras, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + 36, y + h / 2, 42, BLANC, "g")
-  animation(p.anim, x + 360, y + h / 2, 0.40, t)
-  temperature(gras, p.max, x + 580, y + h / 2, 46, BLANC, "c")
-  temperature(sans, p.min, x + 720, y + h / 2, 42, PALE, "c")
+  texte(gras, JOURS_COURTS[p.jour] .. " " .. p.quantieme, x + 36, y + 72, 42, BLANC, "g")
+  animation(p.anim, x + 320, y + h / 2, 0.48, t)
+  temperature(gras, p.max, x + 560, y + 74, 50, BLANC, "c")
+  temperature(sans, p.min, x + 690, y + 74, 44, PALE, "c")
   if p.pluie then
-    texte(sans, entier(p.pluie) .. " %", x + w - 36, y + h / 2, 38, BLEU, "d")
+    texte(sans, "Pluie " .. entier(p.pluie) .. " %", x + w - 36, y + 72, 36, BLEU, "d")
   end
 end
 
-local function paysage(d, age, t, ts)
-  -- Lieu, heure et date
-  tuile(40, 40, 860, 300)
-  texte(gras, meteo.ville or ville, 80, 96, ajuste(gras, meteo.ville or ville, 54, 500), OR, "g")
-  texte(gras, string.format("%02d:%02d", d.hour, d.min), 80, 222, 150, BLANC, "g")
-  texte(gras, JOURS[d.wday - 1], 860, 96, 44, BLANC, "d")
-  texte(gras, tostring(d.day), 860, 168, 76, BLANC, "d")
-  texte(sans, MOIS[d.month], 860, 238, 42, PALE, "d")
-  texte(sans, tostring(d.year), 860, 292, 42, PALE, "d")
+-- Temperature actuelle : grand thermometre, valeur, libelle et tendance
+local function temps_actuel(xa, xt, xv, xl, xf, cy, ts, t)
+  local e = meteo.ecarts or {}
+  animation(meteo.anim or "nuageux", xa, cy, 0.90, t)
+  place(xt, cy - 8, 0.82, thermometre, meteo.temperature, t)
+  local v = meteo.temperature and entier(meteo.temperature) or "--"
+  temperature(gras, meteo.temperature, xv, cy + 58, ajuste(gras, v, 135, 230), BLANC, "d")
+  libelle(libelle_meteo(ts), xl, cy - 20, 34, 310)
+  fleche(xf, cy + 64, e.temperature, 0.5, 1.7)
+  ecart_degres(sans, e.temperature, xf + 26, cy + 75, 30, BLANC, "g")
+end
 
-  -- Temps actuel
-  tuile(920, 40, 960, 300)
-  animation(meteo.anim or "nuageux", 1060, 190, 1.15, t)
-  temperature(gras, meteo.temperature, 1500, 190, 170, BLANC, "d")
-  libelle(libelle_meteo(ts), 1530, 190, 40, 325, "g")
+local function paysage(d, age, t, ts, rang)
+  local nom = meteo.ville or "Sarrebourg"
 
-  -- Mesures
-  mesures(function(i) return 40 + i * 309, 360, 295, 280 end, age, d.hour * 60 + d.min, t)
+  tuile(40, 30, 860, 205)
+  texte(gras, nom, 80, 78, ajuste(gras, nom, 42, 420), OR, "g")
+  points_villes(92, 100, rang)
+  texte(gras, string.format("%02d:%02d", d.hour, d.min), 80, 212, 118, BLANC, "g")
+  texte(gras, JOURS[d.wday - 1], 860, 88, 58, BLANC, "d")
+  texte(gras, tostring(d.day), 860, 168, 92, BLANC, "d")
+  local mois = MOIS[d.month] .. " " .. d.year
+  texte(sans, mois, 860, 216, ajuste(sans, mois, 42, 370), PALE, "d")
 
-  -- Previsions
+  tuile(920, 30, 960, 205)
+  temps_actuel(1050, 1215, 1520, 1550, 1566, 132, ts, t)
+
+  mesures(function(i) return 40 + i * 236, 251, 222, 235 end, age, d.hour * 60 + d.min, t)
+
+  courbe(40, 502, 1840, 215, 170, true, t)
+
   for i, p in ipairs(meteo.previsions or {}) do
-    prevision_tuile(p, 40 + (i - 1) * 371, 660, 356, 380, t)
+    prevision_tuile(p, 40 + (i - 1) * 371, 733, 356, 317, t)
   end
 end
 
-local function portrait(d, age, t, ts)
+local function portrait(d, age, t, ts, rang)
+  local nom = meteo.ville or "Sarrebourg"
   local date = JOURS[d.wday - 1] .. " " .. d.day .. " " .. MOIS[d.month] .. " " .. d.year
 
-  tuile(40, 40, 1000, 430)
-  texte(gras, meteo.ville or ville, 540, 110, ajuste(gras, meteo.ville or ville, 62, 920), OR, "c")
-  texte(gras, string.format("%02d:%02d", d.hour, d.min), 540, 270, 170, BLANC, "c")
-  texte(sans, date, 540, 410, ajuste(sans, date, 48, 920), PALE, "c")
+  tuile(40, 30, 1000, 320)
+  texte(gras, nom, 540, 92, ajuste(gras, nom, 54, 920), OR, "c")
+  points_villes(540, 118, rang, true)
+  texte(gras, string.format("%02d:%02d", d.hour, d.min), 540, 245, 130, BLANC, "c")
+  texte(sans, date, 540, 322, ajuste(sans, date, 54, 920), PALE, "c")
 
-  tuile(40, 490, 1000, 330)
-  animation(meteo.anim or "nuageux", 190, 655, 1.15, t)
-  temperature(gras, meteo.temperature, 680, 655, 170, BLANC, "d")
-  libelle(libelle_meteo(ts), 700, 655, 40, 310, "g")
+  tuile(40, 366, 1000, 215)
+  temps_actuel(150, 300, 630, 660, 678, 475, ts, t)
 
   mesures(function(i)
-    return 40 + (i % 3) * 340, 840 + math.floor(i / 3) * 254, 320, 240
+    return 40 + (i % 4) * 253.3, 597 + math.floor(i / 4) * 220, 240, 208
   end, age, d.hour * 60 + d.min, t)
 
+  courbe(40, 1037, 1000, 225, 14, false, t)
+
   for i, p in ipairs(meteo.previsions or {}) do
-    prevision_ligne(p, 40, 1354 + (i - 1) * 108, 1000, 98, t)
+    prevision_ligne(p, 40, 1278 + (i - 1) * 124, 1000, 112, t)
   end
 end
 
 function node.render()
+  local t   = sys.now()
+  local ts  = os.time()
+
+  -- Ville affichee, a tour de role
+  local rang = 1
+  local voile = 0
+  if #villes > 1 then
+    rang = math.floor(t / duree_ville) % #villes + 1
+    local p = t % duree_ville
+    voile = math.max(0, 1 - p / 0.4, 1 - (duree_ville - p) / 0.4)
+  end
+  meteo = villes[rang] or {}
+
+  local utc = os.date("!*t", ts)
+  local d   = os.date("!*t", ts + (meteo.decalage or decalage_paris(utc)))
+  teinte(d.hour * 60 + d.min)
+
   gl.clear(FOND[1], FOND[2], FOND[3], 1)
 
   -- Orientation : L x H est la taille de l'ecran une fois tourne
@@ -584,14 +875,14 @@ function node.render()
   gl.translate((L - base_l * k) / 2, (H - base_h * k) / 2)
   gl.scale(k, k, 1)
 
-  local ts  = os.time()
-  local utc = os.date("!*t", ts)
-  local d   = os.date("!*t", ts + (meteo.decalage or decalage_paris(utc)))
-  local t   = sys.now()
-
   if L < H then
-    portrait(d, age_lune(ts), t, ts)
+    portrait(d, age_lune(ts), t, ts, rang)
   else
-    paysage(d, age_lune(ts), t, ts)
+    paysage(d, age_lune(ts), t, ts, rang)
+  end
+
+  -- Fondu rapide entre deux villes
+  if voile > 0 then
+    forme(0, 0, base_l, base_h, 0, FOND, voile)
   end
 end
